@@ -1,0 +1,6 @@
+*.fits
+
+match
+a.out
+
+.vscode/
