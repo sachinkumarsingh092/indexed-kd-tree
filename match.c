@@ -15,6 +15,15 @@ struct grid
 
 
 
+/* For internal use only. */
+struct brightestStarsId
+{
+  size_t size; 
+  size_t star_id[5];
+};
+
+
+
 
 void
 grid_make(gal_data_t *ra, gal_data_t *dec, size_t ra_numbins, 
@@ -84,12 +93,103 @@ grid_findindex(double ra, double dec, struct grid *in_grid)
 
 
 
+/* Returns a 2x2 array with first index having the index of the 
+   box in the grid and the second index having the IDs of the stars. */
+void
+find_brightestStars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
+                    struct grid *in_grid, size_t num_brightestStarsId, 
+                    size_t brightestStar_arr[][5])
+{
+  size_t i, j, index;
+  size_t *sortedId_arr=NULL;
+  double *ra_arr=ra->array;
+	double *dec_arr=dec->array;
+  float *magnitude_arr=magnitude->array;
+  struct brightestStarsId *brightestIDs=NULL;
+
+
+  /* Allocate and initialize the structure. */
+  brightestIDs=malloc(magnitude->size*sizeof(*brightestIDs));
+  for(i=0;i<magnitude->size;++i)
+  {
+    for(j=0;j<num_brightestStarsId;j++) brightestIDs[i].star_id[j]=0;
+
+    brightestIDs[i].size=0;
+  }
+
+
+  /* Allocate object id array and initialize. */
+  sortedId_arr=malloc (magnitude->size*sizeof (*sortedId_arr));
+  for(i=0;i<magnitude->size; ++i)
+    sortedId_arr[i]=i;
+
+
+  /* Pointer to an array magnitude_arr to be used as a reference. */
+  gal_qsort_index_single=magnitude_arr;
+
+ /* Use brightness column as a reference to sort stars ID array
+      in incresing order(brightness is inverse of number's
+      magnitudes).  */
+  qsort (sortedId_arr, magnitude->size, sizeof(size_t), 
+        gal_qsort_index_single_float32_d);
+
+
+  /* Iterate through all the stars in the grid and save IDs
+     of the brightest stars. The array of magnitudes of brightness
+     is already sorted so for each box in grid only the brightest 
+     star indexes will be stored. */
+  for (i=0;i<magnitude->size;++i)
+    {
+      /* Index of the grid box corresponding to particular RA and DEC
+         values in the sorted order. */
+      index = grid_findindex (ra_arr[sortedId_arr[i]],
+                              dec_arr[sortedId_arr[i]], in_grid);
+
+      /* For a check:
+      printf("magnitude = %g, magnitude_sorted = %g"
+              " index = %zu sorted index = %zu\n",
+              magnitude_arr[i], magnitude_arr[sortedId_arr[i]], i, sortedId_arr[i]);
+      */
+
+      /* If there are less number of star ids for the box than required,
+         find more stars in that particular box. */
+      if ( brightestIDs[index].size < num_brightestStarsId )
+        {
+          /* Store the ID of the brightest stars in the structure. */
+          brightestIDs[index].star_id[brightestIDs[index].size]=sortedId_arr[i];
+
+          /* Store the ID of the brightest stars in the 2d array that
+             will be returned and finally used. First index having 
+             the index of the box in the grid and the second index 
+             having the IDs of the stars.*/
+          brightestStar_arr[index][brightestIDs[index].size]=sortedId_arr[i];
+
+          /* For a check:
+            printf("brightest_arr[%zu][%zu] = %zu\n", 
+                    index, brightestIDs[index].size, sortedId_arr[i]);
+          */
+
+          /* Increase the size, which signifies the number of IDs that are
+             currently stored for the particular box. */
+          brightestIDs[index].size++;
+        }
+    }
+
+  /* Free the allocations. */
+  free(brightestIDs);
+}
+
+
+
+
+
 int main()
 {
 	size_t i;
 	int quitemmap=1;
 	size_t minmapsize=-1;
 	struct grid in_grid={0};
+  size_t brightestStar_arr[26][5]={0};
 	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
 
 	/* Choose columns to read. */
@@ -118,10 +218,12 @@ int main()
 	for(i=0;i<ra->size;++i)
 	{
 		size_t index = grid_findindex(ra_arr[i], dec_arr[i], &in_grid);
+    if( index == 25)
 		printf("index = %zu ra = %f, dec = %f\n", index, ra_arr[i], dec_arr[i]);
 	}
 
 	/* Find the top 5 star ids using structure. */
+  find_brightestStars(ra, dec, magnitude, &in_grid, 5, brightestStar_arr);
 
 	/* Total number of quads. */
 	size_t num_quads=x_numbin*y_numbin*num_stars_per_gpixel;
