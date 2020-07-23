@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 
 #include <gnuastro/qsort.h>
@@ -22,7 +23,7 @@ struct grid
 /* For internal use only. */
 struct brightestStarsId_t
 {
-  size_t size; 
+  size_t size;
   size_t star_id[5];
 };
 
@@ -43,7 +44,7 @@ struct quad_t
 /* Make a grid of boxes on the catalogue dividing it in ranges
    of RA and DEC. */
 void
-grid_make(gal_data_t *ra, gal_data_t *dec, size_t ra_numbins, 
+grid_make(gal_data_t *ra, gal_data_t *dec, size_t ra_numbins,
           size_t dec_numbins, struct grid* out_grid)
 {
 	gal_data_t *ra_min=NULL, *ra_max=NULL;
@@ -111,11 +112,11 @@ grid_findindex(double ra, double dec, struct grid *in_grid)
 /****************finding brightest stars****************************/
 
 
-/* Returns a 2x2 array with first index having the index of the 
+/* Returns a 2x2 array with first index having the index of the
    box in the grid and the second index having the IDs of the stars. */
 void
 find_brightestStars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
-                    struct grid *in_grid, size_t num_brightestStarsId, 
+                    struct grid *in_grid, size_t num_brightestStarsId,
                     size_t brightestStarId_arr[][5])
 {
   size_t i, j, index;
@@ -148,13 +149,13 @@ find_brightestStars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
  /* Use brightness column as a reference to sort stars ID array
       in incresing order(brightness is inverse of number's
       magnitudes).  */
-  qsort (sortedId_arr, magnitude->size, sizeof(size_t), 
+  qsort (sortedId_arr, magnitude->size, sizeof(size_t),
         gal_qsort_index_single_float32_d);
 
 
   /* Iterate through all the stars in the grid and save IDs
      of the brightest stars. The array of magnitudes of brightness
-     is already sorted so for each box in grid only the brightest 
+     is already sorted so for each box in grid only the brightest
      star indexes will be stored. */
   for (i=0;i<magnitude->size;++i)
     {
@@ -177,15 +178,15 @@ find_brightestStars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
           brightestIDs[index].star_id[brightestIDs[index].size]=sortedId_arr[i];
 
           /* Store the ID of the brightest stars in the 2d array that
-             will be returned and finally used. First index having 
-             the index of the box in the grid and the second index 
+             will be returned and finally used. First index having
+             the index of the box in the grid and the second index
              having the IDs of the stars.*/
           brightestStarId_arr[index][brightestIDs[index].size]=sortedId_arr[i];
 
-          // /* For a check:
-            printf("brightest_arr[%zu][%zu] = %zu\n", 
+          /* For a check:
+            printf("brightest_arr[%zu][%zu] = %zu\n",
                     index, brightestIDs[index].size, sortedId_arr[i]);
-          // */
+          */
 
           /* Increase the size, which signifies the number of IDs that are
              currently stored for the particular box. */
@@ -271,18 +272,18 @@ make_hashcodes_worker(void *in_prm)
   size_t *timesUsed_count_arr=NULL;
   struct quad_t final_quad[4]={0};
 
-
-
+  /* Array declerations. */
   double *ra_arr=p->ra->array;
   double *dec_arr=p->dec->array;
   float  *magnitude_arr=p->magnitude->array;
- 
-  size_t num_totalStars=sizeof(p->brightestStarId_arr)
-                        /sizeof(p->brightestStarId_arr[0][0]);
+
+  /* Grid dimentions. */
   size_t row=sizeof(p->brightestStarId_arr)
               /sizeof(p->brightestStarId_arr[0]);
   size_t column=sizeof(p->brightestStarId_arr[0])
-              /sizeof(p->brightestStarId_arr[0][0]);
+                /sizeof(p->brightestStarId_arr[0][0]);
+  size_t num_totalStars=sizeof(p->brightestStarId_arr)
+                        /sizeof(p->brightestStarId_arr[0][0]);
 
   /* Make an array that keeps the count of the number
      of times a star is used by increasing the value
@@ -294,7 +295,10 @@ make_hashcodes_worker(void *in_prm)
   brightness_Id=malloc(num_totalStars*sizeof(*brightness_Id));
   for(i=0;i<row;++i)
     for(j=0;j<column;++j)
+    {
       brightness_Id[k++]=p->brightestStarId_arr[i][j];
+      // printf("brightness ID = %zu, %zu\n", brightness_Id[k], p->brightestStarId_arr[i][j]);
+    }
 
 
   /* Allocate memory for quads and initialise it. */
@@ -308,7 +312,6 @@ make_hashcodes_worker(void *in_prm)
       quads[i].brightness=0;
     }
 
-
   /* For every star,Niners do a complete search and select the stars
      for quads which are in a particular range from it. */
   for (i=0;i<num_totalStars;++i)
@@ -317,14 +320,13 @@ make_hashcodes_worker(void *in_prm)
         {
           /* Check the number of times the stars is used. */
           if( timesUsed_count_arr[brightness_Id[i]] < p->num_timesUsed )
-
             /* Search for stars in a particular range. We take stars
-              which are at a maximum of `maxStarDisInQuad` distance 
+              which are at a maximum of `maxStarDisInQuad` distance
               from the current star. */
-            if ( ra_arr[brightness_Id[i]] <= ra_arr[brightness_Id[j]]+p->maxStarDisInQuad &&
-                ra_arr[brightness_Id[i]] >= ra_arr[brightness_Id[j]]+p->maxStarDisInQuad)
-              if ( dec_arr[brightness_Id[i]] <= dec_arr[brightness_Id[j]]+p->maxStarDisInQuad &&
-                  dec_arr[brightness_Id[i]] >= dec_arr[brightness_Id[j]]+p->maxStarDisInQuad)
+            if ( ra_arr[brightness_Id[j]] <= ra_arr[brightness_Id[i]]+p->maxStarDisInQuad &&
+                ra_arr[brightness_Id[j]] >= ra_arr[brightness_Id[i]]-p->maxStarDisInQuad)
+              if ( dec_arr[brightness_Id[j]] <= dec_arr[brightness_Id[i]]+p->maxStarDisInQuad &&
+                  dec_arr[brightness_Id[j]] >= dec_arr[brightness_Id[i]]-p->maxStarDisInQuad)
                 {
                   /* We find distances from current star to later sort the stars
                     on basis of diatance and form quads based on the distance.
@@ -337,7 +339,7 @@ make_hashcodes_worker(void *in_prm)
                                 ( dec_arr[brightness_Id[j]]-dec_arr[brightness_Id[i]]);
 
                   /* Store the relevant details for the possible quad member star. */
-                  quads[i].index=brightness_Id[j];
+                  quads[k].index=brightness_Id[j];
                   quads[k].ra=ra_arr[brightness_Id[j]];
                   quads[k].dec=dec_arr[brightness_Id[j]];
                   quads[k].brightness=magnitude_arr[brightness_Id[j]];
@@ -371,16 +373,8 @@ make_hashcodes_worker(void *in_prm)
             timesUsed_count_arr[quads[k-4].index]++;
             timesUsed_count_arr[quads[k-2].index]++;
             timesUsed_count_arr[quads[k].index]++;
-
-            printf("%lf, %lf, %f, %lf, %zu\n", final_quad[0].ra,
-                                      final_quad[0].dec,
-                                      final_quad[0].brightness,
-                                      final_quad[0].distance,
-                                      final_quad[0].index);
-
-
           }
-        
+
         /* Reset the quads. */
         for(j=0;j<=k;++j)
           {
@@ -390,11 +384,8 @@ make_hashcodes_worker(void *in_prm)
             quads[j].distance=0;
             quads[j].brightness=0;
           }
-        
+
     }
-
-
-
 
   /* Free allocated space. */
   free(quads);
@@ -415,7 +406,7 @@ make_hashcodes_worker(void *in_prm)
 int main()
 {
   struct params p;
-	size_t i, index;
+	size_t i,j, index;
 	int quitemmap=1;
 	size_t minmapsize=-1;
 	struct grid in_grid={0};
@@ -445,6 +436,7 @@ int main()
 	double *ra_arr=ra->array;
 	double *dec_arr=dec->array;
 
+  /* Find indexes. */
 	for(i=0;i<ra->size;++i)
 		index = grid_findindex(ra_arr[i], dec_arr[i], &in_grid);
 
@@ -454,17 +446,22 @@ int main()
 	/* Total number of quads. */
 	size_t num_quads=x_numbin*y_numbin*num_stars_per_gpixel;
 
-  double maxStarDisInQuad=max(in_grid.step_size[0],
-                              in_grid.step_size[1]);
-  size_t num_timesUsed=10;    
 
   /* Configure p. */
+  double maxStarDisInQuad=max(in_grid.step_size[0],
+                              in_grid.step_size[1]);
+  size_t num_timesUsed=10;
+
   p.ra=ra;
-  p.dec=dec;  
+  p.dec=dec;
   p.magnitude=magnitude;
   p.num_timesUsed=num_timesUsed;
   p.maxStarDisInQuad=maxStarDisInQuad;
-  
+  for(i=0;i<26;++i)
+    for(j=0;j<5;j++)
+      p.brightestStarId_arr[i][j]=brightestStar_arr[i][j];
+
+
   /* Spin-off the threads and do the processing on each thread. */
   gal_threads_spin_off(make_hashcodes_worker, &p, 10, 1);
 
