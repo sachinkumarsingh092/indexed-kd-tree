@@ -12,11 +12,18 @@
 
 
 /* Internally used macro to help in the processing */
+# ifndef M_PI
+# define M_PI 3.14159265358979323846
+# endif
+
+
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a);  \
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
+# define DEG2RAD(d) (d)*M_PI/180
+# define RAD2DEG(d) (d)*180/M_PI
 
 
 
@@ -202,6 +209,105 @@ find_brightest_stars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
 
 
 
+
+
+/**************making hashes************************/
+
+/* Return the angle in range [0, 360) degrees between 
+   points A, O and B where O is the vertex of angle AOB. */
+double
+find_angle_aob(double ax, double ay, double ox, double oy, double bx, double by)
+{
+  double dir_o_to_a=0, dir_o_to_b=0, angle_aob=0;
+
+  dir_o_to_a = atan2(ay - oy, ax - ox);
+  dir_o_to_b = atan2(by - oy, bx - ox);
+
+  angle_aob = dir_o_to_a - dir_o_to_b;
+
+  /* atan2 returns anngle between [-pi, +pi] radians.
+     Convert it [0, 360) degrees. */
+  angle_aob = RAD2DEG(angle_aob);
+
+  return angle_aob>=0
+         ? angle_aob
+         : angle_aob+360;
+}
+
+
+
+
+
+/* Make the final hash codes using angle between line AB and AC and AD.
+   Finally return a array of size 4 cotaining the code - {Cx, Cy, Dx, Dy}.
+   Also, after this the quads will be sorted by brightness, so this
+   further removes redundencies. */
+void 
+make_hash_codes(struct quad_vertex* sorted_vertices, double *cx, double *cy, 
+                double *dx, double *dy, uint16_t *rel_brightness)
+{
+  double scale=0;
+  double angle_cab=0, angle_dab=0;
+  double mag_ab=0, mag_ac=0, mag_ad=0;
+
+
+  /* First calculate the angles and add and subtract 45 degrees to make it
+     in frame with the current coordinate system with AB as its angle
+     bisector. */
+  angle_cab=find_angle_aob(sorted_vertices[1].ra, sorted_vertices[1].dec,
+                          sorted_vertices[0].ra, sorted_vertices[0].dec,
+                          sorted_vertices[3].ra, sorted_vertices[3].dec);
+
+
+  angle_dab=find_angle_aob(sorted_vertices[2].ra, sorted_vertices[2].dec,
+                          sorted_vertices[0].ra, sorted_vertices[0].dec,
+                          sorted_vertices[3].ra, sorted_vertices[3].dec);
+
+  /* For a check:
+  printf("angle_cab = %g, angle_dab = %g\n", angle_cab, angle_dab);
+  */
+
+  /* Make a scaled-down value for the new coordinate system. We want that
+                |AB|=1, and hence scale = 1/|AB|
+     where |AB|=sqrt(|AB.ra|^2+|AB.dec|^2).
+     This value can be used to scale-down the other distaces mainly,
+     AC and AD. */
+  mag_ab=sqrt((sorted_vertices[0].ra-sorted_vertices[3].ra)
+              *(sorted_vertices[0].ra-sorted_vertices[3].ra)
+              +(sorted_vertices[0].dec-sorted_vertices[3].dec)
+              *(sorted_vertices[0].dec-sorted_vertices[3].dec));
+
+  scale=1/mag_ab;
+
+
+  /* Find |AC| and |AD|. Then use distance to find cos and sin thetas to
+     give ra and dec coordinates. */
+  mag_ac=sqrt((sorted_vertices[1].ra-sorted_vertices[3].ra)
+              *(sorted_vertices[1].ra-sorted_vertices[3].ra)
+              +(sorted_vertices[1].dec-sorted_vertices[3].dec)
+              *(sorted_vertices[1].dec-sorted_vertices[3].dec));
+
+  mag_ad=sqrt((sorted_vertices[2].ra-sorted_vertices[3].ra)
+              *(sorted_vertices[2].ra-sorted_vertices[3].ra)
+              +(sorted_vertices[2].dec-sorted_vertices[3].dec)
+              *(sorted_vertices[2].dec-sorted_vertices[3].dec));
+
+
+  /* Make the final hash-code. */
+  *cx=mag_ac*scale*cos(45+angle_cab); /* Cx */
+  *cy=mag_ac*scale*sin(45+angle_cab); /* Cy */
+  *dx=mag_ad*scale*cos(45-angle_dab); /* Dx */
+  *dy=mag_ad*scale*sin(45-angle_dab); /* Dy */
+
+}
+
+
+
+
+
+
+
+
 /***************making quads*************************/
 
 
@@ -266,26 +372,26 @@ make_quads_worker(void *in_prm)
   struct params *p=(struct params *)tprm->params;
 
   /* Subsequent definitions. */
-  size_t i, j, sid, qindex;
+  size_t nstars;
   double ref_ra, ref_dec;
+  size_t i, j, sid, qindex;
   struct quad_vertex *qvertices=NULL;
   struct quad_vertex good_vertices[4]={0};
   gal_list_sizet_t *good_stars=NULL, *tstar;
-  size_t nstars;
 
   /* For easy reading*/
-  double *cx=p->cx->array, *cy=p->cy->array;
-  double *dx=p->dx->array, *dy=p->dy->array;
-  uint16_t *rel_brightness=p->rel_brightness->array;
+  double *ra=p->ra->array;
+  double *dec=p->dec->array;
   size_t *a_ind=p->a_ind->array;
   size_t *b_ind=p->b_ind->array;
   size_t *c_ind=p->c_ind->array;
   size_t *d_ind=p->d_ind->array;
-  double max_dist=p->max_star_dis_in_quad;
   size_t *bsi=p->brightest_star_id;
-  double *ra=p->ra->array;
-  double *dec=p->dec->array;
   float  *magnitude=p->magnitude->array;  
+  double max_dist=p->max_star_dis_in_quad;
+  double *cx=p->cx->array, *cy=p->cy->array;
+  double *dx=p->dx->array, *dy=p->dy->array;
+  uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* Go over all the quads that were assigned to this thread. */
   for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i)
@@ -294,7 +400,8 @@ make_quads_worker(void *in_prm)
       qindex = tprm->indexs[i];
       ref_ra = ra[bsi[qindex]];
       ref_dec = dec[bsi[qindex]];
- 
+      // printf("qindex = %zu\n", qindex);
+
       /* Go over all the stars and keep the ones around this
          quad's first star (same index as brightest_star_id). */
       good_stars=NULL;
@@ -354,6 +461,18 @@ make_quads_worker(void *in_prm)
          positions of n, n-2 and n-4 from the current star. */
       qsort(qvertices, nstars, sizeof(struct quad_vertex), sort_by_distance);
 
+      /* 1 -> 23, 51
+         2 -> 30, 55
+         3 -> 25, 80
+         4 -> 35, 90
+
+         So find distance between all the stars in the quad wrt each other 
+         and select the 2 stars that are most distant as A or B. 
+         In the above ex the most distant star are 1 and 4. After we define star
+         A to be the one which is more nearer to star C and D(or the other 2 stars)
+         i.e if dis(1, 2) < dis(1, 3) 
+
+          */
       /* Make the final quad and assign relative positions
          of sorted stars to it. */
       switch(nstars)
@@ -374,7 +493,11 @@ make_quads_worker(void *in_prm)
             good_vertices[2] = qvertices[nstars-3];  /* D */
             good_vertices[3] = qvertices[nstars-1];  /* B */
         }
-    
+      /* Write a ds9 region file(on 1 thread only). */
+
+      /* Check if C and D are within the circle of radius 0.5. 
+         Use middle point of AB as centre and check the distance.*/
+
       /* Sort according to brightness. */
       qsort(good_vertices, 4, sizeof(struct quad_vertex), sort_by_brightness);
 
@@ -386,6 +509,11 @@ make_quads_worker(void *in_prm)
         */
       make_hash_codes(good_vertices, &cx[qindex], &cy[qindex], &dx[qindex], &dy[qindex],
                       &rel_brightness[qindex]);
+
+      /*
+      printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
+      */
+
       a_ind[qindex]=good_vertices[0].index;
       b_ind[qindex]=good_vertices[3].index;
       c_ind[qindex]=good_vertices[1].index;
