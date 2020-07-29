@@ -8,6 +8,7 @@
 #include <gnuastro/table.h>
 #include <gnuastro/threads.h>
 #include <gnuastro/pointer.h>
+#include <gnuastro/polygon.h>
 #include <gnuastro/statistics.h>
 
 
@@ -15,7 +16,6 @@
 # ifndef M_PI
 # define M_PI 3.14159265358979323846
 # endif
-
 
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a);  \
@@ -46,6 +46,73 @@ struct quad_vertex
   double distance;
   float  brightness;
 };
+
+
+
+
+
+
+
+/***************Visualization*****************/
+
+/* Make a ds9 complatiable polygon region file for easy visualizations. 
+
+   Arguments:
+   char *filename      - The filename of the region file.
+   size_t num_polygons - Total number of polygons.
+   double *polygon      - The array containg the points of the polygon. 
+   size_t num_vertices - Number of vertices of each polygon. 
+   char *color         - The color of the polygons in DS9.
+
+   Return:
+   The region file having polygons of `num_vertices` points.
+*/
+void
+gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
+                      size_t num_vertices, char *color)
+{
+  FILE *fileptr;
+  size_t i, j, n;
+
+  /* If no color is selected, then set default color to green. */
+  if (!color) color="green";
+
+  /* Open the file. */
+  fileptr = fopen(filename, "w+");
+
+  /* Write the format of polygon region file. */
+  fprintf(fileptr, "# Region file format: DS9 version 4.1\n");
+  fprintf(fileptr, "global color=%s dashlist=8 3 width=1 "
+                    "font=\"helvetica 10 normal roman\" select=1 "
+                    "highlite=1 dash=0 fixed=0 edit=1 move=1 delete=1 "
+                    "include=1 source=1\n", color);
+  fprintf(fileptr, "fk5\n");
+
+  /* Write the vertices in the file. */
+  j=0;
+  for (i=0; i<num_polygons; ++i)
+    {
+      if (polygon[j*2]!=0 && polygon[j*2+1]!=0)
+        {
+          fprintf (fileptr, "polygon(");
+            for (n=0; n<num_vertices; ++n)
+              {
+                if (j%num_vertices==0) 
+                  fprintf(fileptr, "%lf,%lf", polygon[j*2], polygon[j*2+1]);
+                else
+                  fprintf(fileptr, ",%lf,%lf", polygon[j*2], polygon[j*2+1]);
+                ++j;
+              }
+          fprintf(fileptr, ")\n");
+        }
+    }
+
+  /* Close the file. */
+  fclose(fileptr);
+}
+
+
+
 
 
 
@@ -393,6 +460,10 @@ make_quads_worker(void *in_prm)
   double *dx=p->dx->array, *dy=p->dy->array;
   uint16_t *rel_brightness=p->rel_brightness->array;
 
+  /* For polygon region file. Remove after testing. */
+  double *polygon=malloc(125*4*2*sizeof(*polygon));
+  size_t poly_counter=0;
+
   /* Go over all the quads that were assigned to this thread. */
   for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i)
     {
@@ -400,7 +471,6 @@ make_quads_worker(void *in_prm)
       qindex = tprm->indexs[i];
       ref_ra = ra[bsi[qindex]];
       ref_dec = dec[bsi[qindex]];
-      // printf("qindex = %zu\n", qindex);
 
       /* Go over all the stars and keep the ones around this
          quad's first star (same index as brightest_star_id). */
@@ -493,7 +563,33 @@ make_quads_worker(void *in_prm)
             good_vertices[2] = qvertices[nstars-3];  /* D */
             good_vertices[3] = qvertices[nstars-1];  /* B */
         }
-      /* Write a ds9 region file(on 1 thread only). */
+      
+      // /* For a test:
+      printf("good_vertices = (%g, %g) (%g, %g) (%g, %g) (%g, %g)\n",
+             good_vertices[0].ra, good_vertices[0].dec,
+             good_vertices[1].ra, good_vertices[1].dec,
+             good_vertices[2].ra, good_vertices[2].dec,
+             good_vertices[3].ra, good_vertices[3].dec  );
+      // */
+      // /* Write a ds9 region file(on 1 thread only). Delete this section
+      //    after testing.
+      printf("poly_counter = %zu\n", poly_counter);
+      size_t ordinds[8]={0};
+      double temp[8]={good_vertices[0].ra, good_vertices[0].dec,
+                      good_vertices[1].ra, good_vertices[1].dec,
+                      good_vertices[2].ra, good_vertices[2].dec,
+                      good_vertices[3].ra, good_vertices[3].dec};
+      gal_polygon_vertices_sort(temp, 4, ordinds);
+      polygon[8*poly_counter  ]=good_vertices[ordinds[0]].ra;
+      polygon[8*poly_counter+1]=good_vertices[ordinds[0]].dec;
+      polygon[8*poly_counter+2]=good_vertices[ordinds[1]].ra;
+      polygon[8*poly_counter+3]=good_vertices[ordinds[1]].dec;
+      polygon[8*poly_counter+4]=good_vertices[ordinds[2]].ra;
+      polygon[8*poly_counter+5]=good_vertices[ordinds[2]].dec;
+      polygon[8*poly_counter+6]=good_vertices[ordinds[3]].ra;
+      polygon[8*poly_counter+7]=good_vertices[ordinds[3]].dec;
+      poly_counter++;
+      // */
 
       /* Check if C and D are within the circle of radius 0.5. 
          Use middle point of AB as centre and check the distance.*/
@@ -522,6 +618,8 @@ make_quads_worker(void *in_prm)
       /* Clean up. */
       free(qvertices);
     }
+  /* Make region file. Not thread safe. Remove after testing. */
+  gal_polygon_to_ds9reg("polygon.reg", 125, polygon, 4, NULL);
 
   /* Wait for all the other threads to finish, then return. */
   if(tprm->b) pthread_barrier_wait(tprm->b);
@@ -597,7 +695,7 @@ int main()
 {
   /* Input arguments. */
 	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
-  size_t num_threads=4;
+  size_t num_threads=1;
   char *kd_tree_outname="kd-tree-output.fits";
 
 
