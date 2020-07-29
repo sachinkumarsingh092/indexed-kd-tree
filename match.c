@@ -73,6 +73,8 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
 {
   FILE *fileptr;
   size_t i, j, n;
+  size_t *ordinds=NULL;
+  double *temp_sorted_arr=NULL;
 
   /* If no color is selected, then set default color to green. */
   if (!color) color="green";
@@ -92,19 +94,35 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
   j=0;
   for (i=0; i<num_polygons; ++i)
     {
-      if (polygon[j*2]!=0 && polygon[j*2+1]!=0)
+      /* Allocate temporary arrays. */
+      ordinds=malloc(num_vertices*2*(sizeof(*ordinds)));
+      temp_sorted_arr=malloc(num_vertices*2*sizeof(*temp_sorted_arr));
+
+      /* Start writing the polygons to file. */
+      fprintf (fileptr, "polygon(");
+
+      /* Make a temporary array for sorting. */
+      for (n=0; n<2*num_vertices; ++n)
+        temp_sorted_arr[n]=polygon[j++];
+
+      /* Sort the vertices in couterclockwise. */
+      gal_polygon_vertices_sort(temp_sorted_arr, num_vertices, ordinds);
+
+      /* Write the points in te file. */
+      for (n=0; n<num_vertices; ++n)
         {
-          fprintf (fileptr, "polygon(");
-            for (n=0; n<num_vertices; ++n)
-              {
-                if (j%num_vertices==0) 
-                  fprintf(fileptr, "%lf,%lf", polygon[j*2], polygon[j*2+1]);
-                else
-                  fprintf(fileptr, ",%lf,%lf", polygon[j*2], polygon[j*2+1]);
-                ++j;
-              }
-          fprintf(fileptr, ")\n");
+          if (n%num_vertices==0)
+            fprintf(fileptr, "%lf,%lf", temp_sorted_arr[2*ordinds[n]  ],
+                                        temp_sorted_arr[2*ordinds[n]+1]);
+          else
+            fprintf(fileptr, ",%lf,%lf", temp_sorted_arr[2*ordinds[n]  ],
+                                         temp_sorted_arr[2*ordinds[n]+1]);
         }
+      fprintf(fileptr, ")\n");
+
+      /* free the temporary arrays. */
+      free(temp_sorted_arr);
+      free(ordinds);
     }
 
   /* Close the file. */
@@ -461,7 +479,8 @@ make_quads_worker(void *in_prm)
   uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* For polygon region file. Remove after testing. */
-  double *polygon=malloc(125*4*2*sizeof(*polygon));
+  size_t total_quads=500;
+  double *polygon=malloc(total_quads*4*2*sizeof(*polygon));
   size_t poly_counter=0;
 
   /* Go over all the quads that were assigned to this thread. */
@@ -564,35 +583,32 @@ make_quads_worker(void *in_prm)
             good_vertices[3] = qvertices[nstars-1];  /* B */
         }
       
-      // /* For a test:
+      /* For a test:
       printf("good_vertices = (%g, %g) (%g, %g) (%g, %g) (%g, %g)\n",
              good_vertices[0].ra, good_vertices[0].dec,
              good_vertices[1].ra, good_vertices[1].dec,
              good_vertices[2].ra, good_vertices[2].dec,
              good_vertices[3].ra, good_vertices[3].dec  );
-      // */
+      */
       // /* Write a ds9 region file(on 1 thread only). Delete this section
       //    after testing.
-      printf("poly_counter = %zu\n", poly_counter);
-      size_t ordinds[8]={0};
-      double temp[8]={good_vertices[0].ra, good_vertices[0].dec,
-                      good_vertices[1].ra, good_vertices[1].dec,
-                      good_vertices[2].ra, good_vertices[2].dec,
-                      good_vertices[3].ra, good_vertices[3].dec};
-      gal_polygon_vertices_sort(temp, 4, ordinds);
-      polygon[8*poly_counter  ]=good_vertices[ordinds[0]].ra;
-      polygon[8*poly_counter+1]=good_vertices[ordinds[0]].dec;
-      polygon[8*poly_counter+2]=good_vertices[ordinds[1]].ra;
-      polygon[8*poly_counter+3]=good_vertices[ordinds[1]].dec;
-      polygon[8*poly_counter+4]=good_vertices[ordinds[2]].ra;
-      polygon[8*poly_counter+5]=good_vertices[ordinds[2]].dec;
-      polygon[8*poly_counter+6]=good_vertices[ordinds[3]].ra;
-      polygon[8*poly_counter+7]=good_vertices[ordinds[3]].dec;
+      // printf("poly_counter = %zu\n", poly_counter);
+      // size_t ordinds[8]={0};
+      // double temp[8]={good_vertices[0].ra, good_vertices[0].dec,
+      //                 good_vertices[1].ra, good_vertices[1].dec,
+      //                 good_vertices[2].ra, good_vertices[2].dec,
+      //                 good_vertices[3].ra, good_vertices[3].dec};
+      // gal_polygon_vertices_sort(temp, 4, ordinds);
+      polygon[8*poly_counter  ]=good_vertices[0].ra;
+      polygon[8*poly_counter+1]=good_vertices[0].dec;
+      polygon[8*poly_counter+2]=good_vertices[1].ra;
+      polygon[8*poly_counter+3]=good_vertices[1].dec;
+      polygon[8*poly_counter+4]=good_vertices[2].ra;
+      polygon[8*poly_counter+5]=good_vertices[2].dec;
+      polygon[8*poly_counter+6]=good_vertices[3].ra;
+      polygon[8*poly_counter+7]=good_vertices[3].dec;
       poly_counter++;
       // */
-
-      /* Check if C and D are within the circle of radius 0.5. 
-         Use middle point of AB as centre and check the distance.*/
 
       /* Sort according to brightness. */
       qsort(good_vertices, 4, sizeof(struct quad_vertex), sort_by_brightness);
@@ -619,7 +635,7 @@ make_quads_worker(void *in_prm)
       free(qvertices);
     }
   /* Make region file. Not thread safe. Remove after testing. */
-  gal_polygon_to_ds9reg("polygon.reg", 125, polygon, 4, NULL);
+  gal_polygon_to_ds9reg("polygon.reg", total_quads, polygon, 4, NULL);
 
   /* Wait for all the other threads to finish, then return. */
   if(tprm->b) pthread_barrier_wait(tprm->b);
@@ -694,7 +710,7 @@ quad_allocate_output(struct params *p, size_t num_quads)
 int main()
 {
   /* Input arguments. */
-	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
+	size_t x_numbin=10, y_numbin=10, num_stars_per_gpixel=5;
   size_t num_threads=1;
   char *kd_tree_outname="kd-tree-output.fits";
 
