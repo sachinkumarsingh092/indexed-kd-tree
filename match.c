@@ -479,7 +479,7 @@ make_quads_worker(void *in_prm)
   uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* For polygon region file. Remove after testing. */
-  size_t total_quads=500;
+  size_t total_quads=125;
   double *polygon=malloc(total_quads*4*2*sizeof(*polygon));
   size_t poly_counter=0;
 
@@ -547,7 +547,7 @@ make_quads_worker(void *in_prm)
       gal_list_sizet_free(good_stars);
 
       /* Sort on the basis of distance and select stars at relative
-         positions of n, n-2 and n-4 from the current star. */
+         positions of n, 0.5 quartile and 0.75 quartile from the current star. */
       qsort(qvertices, nstars, sizeof(struct quad_vertex), sort_by_distance);
 
       /* 1 -> 23, 51
@@ -561,9 +561,12 @@ make_quads_worker(void *in_prm)
          A to be the one which is more nearer to star C and D(or the other 2 stars)
          i.e if dis(1, 2) < dis(1, 3) 
 
-          */
+      */
+
+
       /* Make the final quad and assign relative positions
-         of sorted stars to it. */
+         of sorted stars to it. For C and D, we use the stars
+         at 0.5 and 0.75 quantiles respectively. */
       switch(nstars)
         {
           case 4:
@@ -577,10 +580,10 @@ make_quads_worker(void *in_prm)
             good_vertices[2] = qvertices[3];         /* D */
             good_vertices[3] = qvertices[4];         /* B */
           default:
-            good_vertices[0] = qvertices[0];         /* A */
-            good_vertices[1] = qvertices[nstars-5];  /* C */
-            good_vertices[2] = qvertices[nstars-3];  /* D */
-            good_vertices[3] = qvertices[nstars-1];  /* B */
+            good_vertices[0] = qvertices[0];           /* A */
+            good_vertices[1] = qvertices[nstars/2];    /* C */
+            good_vertices[2] = qvertices[nstars*3/4];  /* D */
+            good_vertices[3] = qvertices[nstars-1];    /* B */
         }
       
       /* For a test:
@@ -590,15 +593,9 @@ make_quads_worker(void *in_prm)
              good_vertices[2].ra, good_vertices[2].dec,
              good_vertices[3].ra, good_vertices[3].dec  );
       */
-      // /* Write a ds9 region file(on 1 thread only). Delete this section
+
+      // /* Write a ds9 region file(on 1 thread only). Remove this section
       //    after testing.
-      // printf("poly_counter = %zu\n", poly_counter);
-      // size_t ordinds[8]={0};
-      // double temp[8]={good_vertices[0].ra, good_vertices[0].dec,
-      //                 good_vertices[1].ra, good_vertices[1].dec,
-      //                 good_vertices[2].ra, good_vertices[2].dec,
-      //                 good_vertices[3].ra, good_vertices[3].dec};
-      // gal_polygon_vertices_sort(temp, 4, ordinds);
       polygon[8*poly_counter  ]=good_vertices[0].ra;
       polygon[8*poly_counter+1]=good_vertices[0].dec;
       polygon[8*poly_counter+2]=good_vertices[1].ra;
@@ -710,7 +707,7 @@ quad_allocate_output(struct params *p, size_t num_quads)
 int main()
 {
   /* Input arguments. */
-	size_t x_numbin=10, y_numbin=10, num_stars_per_gpixel=5;
+	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
   size_t num_threads=1;
   char *kd_tree_outname="kd-tree-output.fits";
 
