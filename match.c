@@ -38,13 +38,35 @@ struct grid
 
 
 
+/* Structure to keep parameters for multithreaded worker function. */
+struct params
+{
+  /* Inputs. */
+  gal_data_t *ra;
+  gal_data_t *dec;
+  gal_data_t *magnitude;
+
+  /* Internal. */
+  double max_star_dis_in_quad;
+  size_t *brightest_star_id;
+
+  /* Output. */
+  gal_data_t *cx, *cy;
+  gal_data_t *dx, *dy;
+  gal_data_t *rel_brightness;
+  gal_data_t *a_ind, *b_ind, *c_ind, *d_ind;
+  gal_data_t *left, *right;
+};
+
+
+
+
 /* For internal use only. */
 struct quad_vertex
 {
   size_t index;
-  double ra, dec;
   double distance;
-  float  brightness;
+  float  *magnitude;
 };
 
 
@@ -60,7 +82,7 @@ struct quad_vertex
    Arguments:
    char *filename      - The filename of the region file.
    size_t num_polygons - Total number of polygons.
-   double *polygon      - The array containg the points of the polygon. 
+   double *polygon     - The array containg the points of the polygon. 
    size_t num_vertices - Number of vertices of each polygon. 
    char *color         - The color of the polygons in DS9.
 
@@ -98,9 +120,6 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
       ordinds=malloc(num_vertices*2*(sizeof(*ordinds)));
       temp_sorted_arr=malloc(num_vertices*2*sizeof(*temp_sorted_arr));
 
-      /* Start writing the polygons to file. */
-      fprintf (fileptr, "polygon(");
-
       /* Make a temporary array for sorting. */
       for (n=0; n<2*num_vertices; ++n)
         temp_sorted_arr[n]=polygon[j++];
@@ -108,7 +127,8 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
       /* Sort the vertices in couterclockwise. */
       gal_polygon_vertices_sort(temp_sorted_arr, num_vertices, ordinds);
 
-      /* Write the points in te file. */
+      /* Start writing the polygons to file. */
+      fprintf (fileptr, "polygon(");
       for (n=0; n<num_vertices; ++n)
         {
           if (n%num_vertices==0)
@@ -328,25 +348,33 @@ find_angle_aob(double ax, double ay, double ox, double oy, double bx, double by)
    Also, after this the quads will be sorted by brightness, so this
    further removes redundencies. */
 void 
-make_hash_codes(struct quad_vertex* sorted_vertices, double *cx, double *cy, 
-                double *dx, double *dy, uint16_t *rel_brightness)
+make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *cx, 
+                double *cy, double *dx, double *dy, uint16_t *rel_brightness)
 {
+  size_t i;
   double scale=0;
   double angle_cab=0, angle_dab=0;
   double mag_ab=0, mag_ac=0, mag_ad=0;
+  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
 
+  /* Fill the ra and dec arrays. */
+  for(i=0;i<4;++i)
+    {
+      ra[i]=ra_arr[sorted_vertices[i].index];
+      dec[i]=dec_arr[sorted_vertices[i].index];
+    }
 
   /* First calculate the angles and add and subtract 45 degrees to make it
      in frame with the current coordinate system with AB as its angle
      bisector. */
-  angle_cab=find_angle_aob(sorted_vertices[1].ra, sorted_vertices[1].dec,
-                          sorted_vertices[0].ra, sorted_vertices[0].dec,
-                          sorted_vertices[3].ra, sorted_vertices[3].dec);
+  angle_cab=find_angle_aob(ra[1], dec[1],
+                           ra[0], dec[0],
+                           ra[3], dec[3]);
 
 
-  angle_dab=find_angle_aob(sorted_vertices[2].ra, sorted_vertices[2].dec,
-                          sorted_vertices[0].ra, sorted_vertices[0].dec,
-                          sorted_vertices[3].ra, sorted_vertices[3].dec);
+  angle_dab=find_angle_aob(ra[2], dec[2],
+                           ra[0], dec[0],
+                           ra[3], dec[3]);
 
   /* For a check:
   printf("angle_cab = %g, angle_dab = %g\n", angle_cab, angle_dab);
@@ -357,25 +385,19 @@ make_hash_codes(struct quad_vertex* sorted_vertices, double *cx, double *cy,
      where |AB|=sqrt(|AB.ra|^2+|AB.dec|^2).
      This value can be used to scale-down the other distaces mainly,
      AC and AD. */
-  mag_ab=sqrt((sorted_vertices[0].ra-sorted_vertices[3].ra)
-              *(sorted_vertices[0].ra-sorted_vertices[3].ra)
-              +(sorted_vertices[0].dec-sorted_vertices[3].dec)
-              *(sorted_vertices[0].dec-sorted_vertices[3].dec));
+  mag_ab=sqrt((ra[0]-ra[3])*(ra[0]-ra[3])
+               +(dec[0]-dec[3])*(dec[0]-dec[3]));
 
   scale=1/mag_ab;
 
 
   /* Find |AC| and |AD|. Then use distance to find cos and sin thetas to
      give ra and dec coordinates. */
-  mag_ac=sqrt((sorted_vertices[1].ra-sorted_vertices[3].ra)
-              *(sorted_vertices[1].ra-sorted_vertices[3].ra)
-              +(sorted_vertices[1].dec-sorted_vertices[3].dec)
-              *(sorted_vertices[1].dec-sorted_vertices[3].dec));
+  mag_ac=sqrt((ra[1]-ra[3])*(ra[1]-ra[3])
+               +(dec[1]-dec[3])*(dec[1]-dec[3]));
 
-  mag_ad=sqrt((sorted_vertices[2].ra-sorted_vertices[3].ra)
-              *(sorted_vertices[2].ra-sorted_vertices[3].ra)
-              +(sorted_vertices[2].dec-sorted_vertices[3].dec)
-              *(sorted_vertices[2].dec-sorted_vertices[3].dec));
+  mag_ad=sqrt((ra[2]-ra[3])*(ra[2]-ra[3])
+               +(dec[2]-dec[3])*(dec[2]-dec[3]));
 
 
   /* Make the final hash-code. */
@@ -416,34 +438,12 @@ sort_by_brightness(const void *a, const void *b)
 {
   struct quad_vertex *p1 = (struct quad_vertex *)a;
   struct quad_vertex *p2 = (struct quad_vertex *)b;
+  double b1 = p1->magnitude[p1->index];
+  double b2 = p2->magnitude[p2->index];
 
-  return ( p1->brightness==p2->brightness
-           ? 0
-           : (p1->brightness<p2->brightness ? -1 : 1) );
+  return b1==b2 ? 0 : (b1<b2 ? -1 : 1);
 }
 
-
-
-
-/* Structure to keep parameters for multithreaded worker function. */
-struct params
-{
-  /* Inputs. */
-  gal_data_t *ra;
-  gal_data_t *dec;
-  gal_data_t *magnitude;
-
-  /* Internal. */
-  double max_star_dis_in_quad;
-  size_t *brightest_star_id;
-
-  /* Output. */
-  gal_data_t *cx, *cy;
-  gal_data_t *dx, *dy;
-  gal_data_t *rel_brightness;
-  gal_data_t *a_ind, *b_ind, *c_ind, *d_ind;
-  gal_data_t *left, *right;
-};
 
 
 
@@ -472,16 +472,18 @@ make_quads_worker(void *in_prm)
   size_t *c_ind=p->c_ind->array;
   size_t *d_ind=p->d_ind->array;
   size_t *bsi=p->brightest_star_id;
-  float  *magnitude=p->magnitude->array;  
   double max_dist=p->max_star_dis_in_quad;
   double *cx=p->cx->array, *cy=p->cy->array;
   double *dx=p->dx->array, *dy=p->dy->array;
   uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* For polygon region file. Remove after testing. */
+  int testing_ds9=1;
+  double *ra_arr=p->ra->array;
+  double *dec_arr=p->dec->array;
   size_t total_quads=125;
-  double *polygon=malloc(total_quads*4*2*sizeof(*polygon));
   size_t poly_counter=0;
+  double *polygon=malloc(total_quads*4*2*sizeof(*polygon));
 
   /* Go over all the quads that were assigned to this thread. */
   for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i)
@@ -533,9 +535,7 @@ make_quads_worker(void *in_prm)
 
           /* Store the relevant details for the possible quad member star. */
           qvertices[j].index=sid;
-          qvertices[j].ra=ra[sid];
-          qvertices[j].dec=dec[sid];
-          qvertices[j].brightness=magnitude[sid];
+          qvertices[j].magnitude=p->magnitude->array;
           qvertices[j].distance=(  (ra[sid]-ref_ra)*(ra[sid]-ref_ra)
                                   +(dec[sid]-ref_dec)*(dec[sid]-ref_dec) );
 
@@ -596,33 +596,32 @@ make_quads_worker(void *in_prm)
 
       // /* Write a ds9 region file(on 1 thread only). Remove this section
       //    after testing.
-      polygon[8*poly_counter  ]=good_vertices[0].ra;
-      polygon[8*poly_counter+1]=good_vertices[0].dec;
-      polygon[8*poly_counter+2]=good_vertices[1].ra;
-      polygon[8*poly_counter+3]=good_vertices[1].dec;
-      polygon[8*poly_counter+4]=good_vertices[2].ra;
-      polygon[8*poly_counter+5]=good_vertices[2].dec;
-      polygon[8*poly_counter+6]=good_vertices[3].ra;
-      polygon[8*poly_counter+7]=good_vertices[3].dec;
-      poly_counter++;
+      if (testing_ds9)
+        {
+          polygon[8*poly_counter+0]=ra_arr[good_vertices[0].index];
+          polygon[8*poly_counter+1]=dec_arr[good_vertices[0].index];
+          polygon[8*poly_counter+2]=ra_arr[good_vertices[1].index];
+          polygon[8*poly_counter+3]=dec_arr[good_vertices[1].index];
+          polygon[8*poly_counter+4]=ra_arr[good_vertices[2].index];
+          polygon[8*poly_counter+5]=dec_arr[good_vertices[2].index];
+          polygon[8*poly_counter+6]=ra_arr[good_vertices[3].index];
+          polygon[8*poly_counter+7]=dec_arr[good_vertices[3].index];
+          poly_counter++;
+        }
       // */
 
       /* Sort according to brightness. */
       qsort(good_vertices, 4, sizeof(struct quad_vertex), sort_by_brightness);
 
-      /* Run make hash function and fill the outputs columns for this quad. 
-       
-         void 
-         make_hash_codes(struct quad_vertex* sorted_vertices, double *cx, double *cy, 
-                         double *dx, double *dy, uint16_t *rel_brightness)
-        */
-      make_hash_codes(good_vertices, &cx[qindex], &cy[qindex], &dx[qindex], &dy[qindex],
+      /* Run make hash function and fill the outputs columns for this quad. */
+      make_hash_codes(good_vertices, p, &cx[qindex], &cy[qindex], &dx[qindex], &dy[qindex],
                       &rel_brightness[qindex]);
 
-      /*
+      /* For a check:
       printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
       */
 
+      /* Store the indexes of the 4 stars in the quad. */
       a_ind[qindex]=good_vertices[0].index;
       b_ind[qindex]=good_vertices[3].index;
       c_ind[qindex]=good_vertices[1].index;
@@ -632,7 +631,11 @@ make_quads_worker(void *in_prm)
       free(qvertices);
     }
   /* Make region file. Not thread safe. Remove after testing. */
-  gal_polygon_to_ds9reg("polygon.reg", total_quads, polygon, 4, NULL);
+  if(testing_ds9)
+    {
+      gal_polygon_to_ds9reg("polygon.reg", total_quads, polygon, 4, NULL);
+      free(polygon);
+    }
 
   /* Wait for all the other threads to finish, then return. */
   if(tprm->b) pthread_barrier_wait(tprm->b);
