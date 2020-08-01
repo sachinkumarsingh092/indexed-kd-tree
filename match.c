@@ -79,14 +79,16 @@ struct quad_vertex
 
 /* Make a ds9 complatiable polygon region file for easy visualizations. 
 
-   Arguments:
+   Arguments
+   =========
    char *filename      - The filename of the region file.
    size_t num_polygons - Total number of polygons.
    double *polygon     - The array containg the points of the polygon. 
    size_t num_vertices - Number of vertices of each polygon. 
    char *color         - The color of the polygons in DS9.
 
-   Return:
+   Return
+   =======
    The region file having polygons of `num_vertices` points.
 */
 void
@@ -367,14 +369,10 @@ make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *c
   /* First calculate the angles and add and subtract 45 degrees to make it
      in frame with the current coordinate system with AB as its angle
      bisector. */
-  angle_cab=find_angle_aob(ra[1], dec[1],
-                           ra[0], dec[0],
-                           ra[3], dec[3]);
+  angle_cab=find_angle_aob(ra[1], dec[1], ra[0], dec[0], ra[3], dec[3]);
 
 
-  angle_dab=find_angle_aob(ra[2], dec[2],
-                           ra[0], dec[0],
-                           ra[3], dec[3]);
+  angle_dab=find_angle_aob(ra[2], dec[2], ra[0], dec[0], ra[3], dec[3]);
 
   /* For a check:
   printf("angle_cab = %g, angle_dab = %g\n", angle_cab, angle_dab);
@@ -389,6 +387,7 @@ make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *c
                +(dec[0]-dec[3])*(dec[0]-dec[3]));
 
   scale=1/mag_ab;
+  // printf("scale = %g\n", scale);
 
 
   /* Find |AC| and |AD|. Then use distance to find cos and sin thetas to
@@ -449,6 +448,127 @@ sort_by_brightness(const void *a, const void *b)
 
 
 
+/* Find indexes of stars A, B, C, D in the given quads. 
+
+   After finding the stars w.r.t a given star, we need to
+   find the pair that is the most distant and assign them
+   as star A and B. To further remove the redumdencies for
+   C, D and to firmly ensure the position of A and B, we ensure
+   that the following conditions hold true:
+                     Cx<=Dx         (1)
+                     Cx+Dx<=1       (2) 
+   The first condition assigns the correct star for C and D
+   while the second condition assigns correct stars for  A and B.
+*/
+void
+find_abcd_indexes(struct quad_vertex* sorted_vertices, struct params *p)
+{
+  size_t i, j;
+  double distance;
+  int perm_set[4][4]={0};
+  double current_max_dis=DBL_MIN;
+  struct quad_vertex temp_vertices[4]={0};
+  size_t a_ind=0, b_ind=0, c_ind=0, d_ind=0;
+  double cx, cy, dx, dy;
+  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
+
+  /* Fill the ra and dec arrays. */
+  for(i=0;i<4;++i)
+    {
+      ra[i]=ra_arr[sorted_vertices[i].index];
+      dec[i]=dec_arr[sorted_vertices[i].index];
+    }
+
+  /* For every star in the sorted_verices. */
+  for(i=0;i<4;++i)
+    for(j=0;j<4;++j)
+      {
+        /* Use a set to remove repeated pairs like {AB, BA} etc. 
+           Further remove cases where the same stars are used like AA etc.
+           */
+        if(!perm_set[i][j] && i!=j)
+          {
+            /* If this combination was unseen, increase its value to 1.*/
+            perm_set[i][j]++;
+            perm_set[j][i]=perm_set[i][j];
+
+            /* Find the distance between the two stars. */
+            distance=( (ra[i]-ra[j])*(ra[i]-ra[j])
+                        +(dec[i]-dec[j])*(dec[i]-dec[j]) );
+
+            /* If the calculated distance is greater than the
+               current maximum, make the current distance equal to
+               current maximum and save the indexes of the current
+               stars as the indexes of A and B. */
+            if(current_max_dis <= distance)
+              {
+                /* Make the current distance equal to current maximum */
+                current_max_dis=distance;
+
+                /* Assign the indexes of A and B. 
+                   Note that due to sorted nature of the input
+                   `struct quad_vertex` and due to the above conditions,
+                   i < j and hence the index of A will always be greater
+                   than the index of B. */
+                a_ind=sorted_vertices[i].index;
+                b_ind=sorted_vertices[j].index;
+              }
+          }
+      }
+
+
+  /* Now we have the indexes of star A and B. The remaining vertices are
+      erandomly assigned as C and D. We will correctly determine the 
+      star C and D after this. */ 
+  for(i=0;i<4;++i)
+    /* If the remaining index is none of those assigned to A or B,
+        assign them to C and D. */
+    if( sorted_vertices[i].index != a_ind && 
+        sorted_vertices[i].index != b_ind )
+      {
+        if(!c_ind) c_ind=sorted_vertices[i].index;
+        else       d_ind=sorted_vertices[i].index;
+      }
+
+  /* We will use a temporary `struct quad_vertex` array to store the
+     indexes of the four stars and then make hashes with those stars
+     and firmly determine the true positions of C and D. */
+  temp_vertices[0].index=a_ind;
+  temp_vertices[1].index=b_ind;
+  temp_vertices[2].index=c_ind;
+  temp_vertices[3].index=d_ind;
+
+  /* For a check
+  printf("A = (%g, %g) B = (%g, %g) C = (%g, %g) D = (%g, %g)\n", 
+         ra_arr[a_ind], dec_arr[a_ind], ra_arr[b_ind], dec_arr[b_ind], 
+         ra_arr[c_ind], dec_arr[c_ind], ra_arr[d_ind], dec_arr[d_ind] );
+  */
+
+  /* Make the hash codes with this configuration of stars. */
+  make_hash_codes(temp_vertices, p, &cx, &cy, &dx, &dy, NULL);
+  printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx, cy, dx, dy);
+
+  /* If the positions of star dont follow the given conditions, 
+     swap them. */
+  if(cx > dx || cx+dx>1)
+    {
+      /* Swap c_ind and d_ind. */
+      c_ind=c_ind+d_ind;
+      d_ind=c_ind-d_ind;
+      c_ind=c_ind-d_ind;
+    }
+}
+
+
+
+
+
+
+
+
+/* Make the quads from the top 5 brightest stars in each box in the
+   grid. This is the worker function used by `gal_thread_spin_off` to
+   be used on multiple threads to make the quads independently. */
 void *
 make_quads_worker(void *in_prm)
 {
@@ -464,7 +584,7 @@ make_quads_worker(void *in_prm)
   struct quad_vertex good_vertices[4]={0};
   gal_list_sizet_t *good_stars=NULL, *tstar;
 
-  /* For easy reading*/
+  /* For easy reading. */
   double *ra=p->ra->array;
   double *dec=p->dec->array;
   size_t *a_ind=p->a_ind->array;
@@ -479,10 +599,10 @@ make_quads_worker(void *in_prm)
 
   /* For polygon region file. Remove after testing. */
   int testing_ds9=1;
+  size_t poly_counter=0;
+  size_t total_quads=125;
   double *ra_arr=p->ra->array;
   double *dec_arr=p->dec->array;
-  size_t total_quads=125;
-  size_t poly_counter=0;
   double *polygon=malloc(total_quads*4*2*sizeof(*polygon));
 
   /* Go over all the quads that were assigned to this thread. */
@@ -526,20 +646,21 @@ make_quads_worker(void *in_prm)
       j=0;
       for(tstar=good_stars; tstar!=NULL; tstar=tstar->next)
         {
-          /* We find distances from current star to later sort the stars
+          /* Assign the value of tstars as Star Id. */
+          sid=tstar->v;
+
+          /* Store the relevant details for the possible quad member star. 
+             We find distances from current star to later sort the stars
              on basis of diatance and form qvertices based on the distance.
              As only the magnitude of distance is required and not the
              absolute value, we use distance square(distance^2 = x*x+y*y)
              rather than using sqrt() to find actual distance. */
-          sid=tstar->v;
-
-          /* Store the relevant details for the possible quad member star. */
           qvertices[j].index=sid;
           qvertices[j].magnitude=p->magnitude->array;
           qvertices[j].distance=(  (ra[sid]-ref_ra)*(ra[sid]-ref_ra)
                                   +(dec[sid]-ref_dec)*(dec[sid]-ref_dec) );
 
-          /* Increment j*/
+          /* Increment j. */
           ++j;
         }
 
@@ -598,13 +719,13 @@ make_quads_worker(void *in_prm)
       //    after testing.
       if (testing_ds9)
         {
-          polygon[8*poly_counter+0]=ra_arr[good_vertices[0].index];
+          polygon[8*poly_counter+0]=ra_arr [good_vertices[0].index];
           polygon[8*poly_counter+1]=dec_arr[good_vertices[0].index];
-          polygon[8*poly_counter+2]=ra_arr[good_vertices[1].index];
+          polygon[8*poly_counter+2]=ra_arr [good_vertices[1].index];
           polygon[8*poly_counter+3]=dec_arr[good_vertices[1].index];
-          polygon[8*poly_counter+4]=ra_arr[good_vertices[2].index];
+          polygon[8*poly_counter+4]=ra_arr [good_vertices[2].index];
           polygon[8*poly_counter+5]=dec_arr[good_vertices[2].index];
-          polygon[8*poly_counter+6]=ra_arr[good_vertices[3].index];
+          polygon[8*poly_counter+6]=ra_arr [good_vertices[3].index];
           polygon[8*poly_counter+7]=dec_arr[good_vertices[3].index];
           poly_counter++;
         }
@@ -613,15 +734,22 @@ make_quads_worker(void *in_prm)
       /* Sort according to brightness. */
       qsort(good_vertices, 4, sizeof(struct quad_vertex), sort_by_brightness);
 
-      /* Run make hash function and fill the outputs columns for this quad. */
+      /* TODO:
+         Run make hash function and fill the outputs columns for this quad. 
+         This function will be used by find_abcd_index function. It might have to
+         be removed from here. */
       make_hash_codes(good_vertices, p, &cx[qindex], &cy[qindex], &dx[qindex], &dy[qindex],
                       &rel_brightness[qindex]);
 
       /* For a check:
       printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
       */
+      find_abcd_indexes(good_vertices, p);
+      exit(0);
 
-      /* Store the indexes of the 4 stars in the quad. */
+      /* TODO:
+         Store the indexes of the 4 stars in the quad. This portion is
+         movedd to the find_abcd function. */
       a_ind[qindex]=good_vertices[0].index;
       b_ind[qindex]=good_vertices[3].index;
       c_ind[qindex]=good_vertices[1].index;
