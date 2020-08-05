@@ -66,7 +66,6 @@ struct quad_vertex
 {
   size_t index;
   double distance;
-  float  *magnitude;
 };
 
 
@@ -212,6 +211,10 @@ grid_make(gal_data_t *ra, gal_data_t *dec, size_t ra_numbins,
 
 
 
+
+
+
+
 /* Return the index of the grid box. */
 size_t
 grid_findindex(double ra, double dec, struct grid *in_grid)
@@ -350,13 +353,16 @@ find_angle_aob(double ax, double ay, double ox, double oy, double bx, double by)
    Also, after this the quads will be sorted by brightness, so this
    further removes redundencies. */
 void 
-make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *cx, 
-                double *cy, double *dx, double *dy, uint16_t *rel_brightness)
+hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct params *p)
 {
   size_t i;
   double scale=0;
   double angle_cab=0, angle_dab=0;
   double mag_ab=0, mag_ac=0, mag_ad=0;
+  double *cx=p->cx->array, *cy=p->cy->array;
+  double *dx=p->dx->array, *dy=p->dy->array;
+  size_t *c_ind=p->c_ind->array;
+  size_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
 
   /* Fill the ra and dec arrays. */
@@ -366,11 +372,12 @@ make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *c
       dec[i]=dec_arr[sorted_vertices[i].index];
     }
 
-  /* First calculate the angles and add and subtract 45 degrees to make it
+  /* TODO: The 45 degree assumption is false. Simply use atan2 here.
+
+     First calculate the angles and add and subtract 45 degrees to make it
      in frame with the current coordinate system with AB as its angle
      bisector. */
   angle_cab=find_angle_aob(ra[1], dec[1], ra[0], dec[0], ra[3], dec[3]);
-
 
   angle_dab=find_angle_aob(ra[2], dec[2], ra[0], dec[0], ra[3], dec[3]);
 
@@ -400,16 +407,80 @@ make_hash_codes(struct quad_vertex* sorted_vertices, struct params *p, double *c
 
 
   /* Make the final hash-code. */
-  *cx=mag_ac*scale*cos(45+angle_cab); /* Cx */
-  *cy=mag_ac*scale*sin(45+angle_cab); /* Cy */
-  *dx=mag_ad*scale*cos(45-angle_dab); /* Dx */
-  *dy=mag_ad*scale*sin(45-angle_dab); /* Dy */
+  cx[qindex]=mag_ac*scale*cos(45+angle_cab); /* Cx */
+  cy[qindex]=mag_ac*scale*sin(45+angle_cab); /* Cy */
+  dx[qindex]=mag_ad*scale*cos(45-angle_dab); /* Dx */
+  dy[qindex]=mag_ad*scale*sin(45-angle_dab); /* Dy */
 
+  /* If the positions of star dont follow the given conditions, 
+   swap them. */
+  if(cx[qindex] > dx[qindex] || cx[qindex]+dx[qindex]>1)
+    {
+      /* Swap c_ind[qindex] and d_ind[qindex]. */
+      c_ind[qindex]=c_ind[qindex]+d_ind[qindex];
+      d_ind[qindex]=c_ind[qindex]-d_ind[qindex];
+      c_ind[qindex]=c_ind[qindex]-d_ind[qindex];
+    }
 }
 
 
 
 
+
+
+
+void
+hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct params *p)
+{
+  size_t i, j;
+  float tmp;
+  float magnitude[4];
+  size_t rel_magnitude_index[4];  /* a, b, c, d values. */
+  float *mag_arr=p->magnitude->array;
+  /* Initialise to the nearest power of 2 such that all previous multiple of 4 bits are 0.*/
+  uint16_t a_bit=1, b_bit=16, c_bit=256, d_bit=4096; 
+  uint16_t *rel_brightness=p->rel_brightness->array;
+
+  /* Make an array for the values of the magnitude. */
+  for(i=0;i<4;++i)
+    magnitude[i]=mag_arr[sorted_vertices[i].index];
+
+  /* Sort these 4 values in ascending order using bubble sort. */
+  for(i=0; i<4; ++i)
+    for(j=0; j<4; ++j)
+      if(magnitude[i] < magnitude[j])
+        {
+          /* Swap these values. */
+          tmp = magnitude[i];         
+				  magnitude[i] = magnitude[j];            
+				  magnitude[j] = tmp;             
+        }
+
+  /* Assign values indexes for relative magnitudes. */
+  for(i=0; i<4; ++i)
+    for(j=0; j<4; ++j)
+      if(mag_arr[sorted_vertices[j].index]==magnitude[i])
+        {
+          rel_magnitude_index[i]=j;
+          break;
+        }
+
+  /* For eg, star A is the a-th star and is either of {0, 1, 2, 3} 
+     0 being the lowest value and 3 being the highest value. */
+
+  /* For eg, if a=3 then loop over a_bit and shift by one bit each time. */
+  a_bit <<= rel_magnitude_index[0];
+  b_bit <<= rel_magnitude_index[1];
+  c_bit <<= rel_magnitude_index[2];
+  d_bit <<= rel_magnitude_index[3];
+
+  // printf("a_bit = %u b_bit = %u c_bit = %u d_bit = %u\n", a_bit, b_bit, c_bit, d_bit);
+  /* for eg, a=3, b=2, c=1, d=0
+     exected output:
+     1 0 0 0   0 1 0 0   0 0 1 0   0 0 0 1 */
+  rel_brightness[qindex] = (a_bit | b_bit | c_bit | d_bit);
+  printf("rel_brightness = %u\n", rel_brightness[qindex]);
+}
 
 
 
@@ -431,20 +502,6 @@ sort_by_distance(const void *a, const void *b)
 
 
 
-/* Sort by brghtness as refrerence in ascending order. */
-static int
-sort_by_brightness(const void *a, const void *b)
-{
-  struct quad_vertex *p1 = (struct quad_vertex *)a;
-  struct quad_vertex *p2 = (struct quad_vertex *)b;
-  double b1 = p1->magnitude[p1->index];
-  double b2 = p2->magnitude[p2->index];
-
-  return b1==b2 ? 0 : (b1<b2 ? -1 : 1);
-}
-
-
-
 
 
 
@@ -461,16 +518,19 @@ sort_by_brightness(const void *a, const void *b)
    while the second condition assigns correct stars for  A and B.
 */
 void
-find_abcd_indexes(struct quad_vertex* sorted_vertices, struct params *p)
+hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct params *p)
 {
   size_t i, j;
   double distance;
-  int perm_set[4][4]={0};
+  int perm_set[4][4]={0}, c_assigned=0;
   double current_max_dis=DBL_MIN;
   struct quad_vertex temp_vertices[4]={0};
-  size_t a_ind=0, b_ind=0, c_ind=0, d_ind=0;
-  double cx, cy, dx, dy;
+  size_t *a_ind=p->a_ind->array;
+  size_t *b_ind=p->b_ind->array;
+  size_t *c_ind=p->c_ind->array;
+  size_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
+  uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* Fill the ra and dec arrays. */
   for(i=0;i<4;++i)
@@ -510,53 +570,50 @@ find_abcd_indexes(struct quad_vertex* sorted_vertices, struct params *p)
                    `struct quad_vertex` and due to the above conditions,
                    i < j and hence the index of A will always be greater
                    than the index of B. */
-                a_ind=sorted_vertices[i].index;
-                b_ind=sorted_vertices[j].index;
+                a_ind[qindex]=sorted_vertices[i].index;
+                b_ind[qindex]=sorted_vertices[j].index;
               }
           }
       }
 
 
   /* Now we have the indexes of star A and B. The remaining vertices are
-      erandomly assigned as C and D. We will correctly determine the 
+      randomly assigned as C and D. We will correctly determine the 
       star C and D after this. */ 
   for(i=0;i<4;++i)
     /* If the remaining index is none of those assigned to A or B,
         assign them to C and D. */
-    if( sorted_vertices[i].index != a_ind && 
-        sorted_vertices[i].index != b_ind )
+    if( sorted_vertices[i].index != a_ind[qindex] && 
+        sorted_vertices[i].index != b_ind[qindex] )
       {
-        if(!c_ind) c_ind=sorted_vertices[i].index;
-        else       d_ind=sorted_vertices[i].index;
+        if(!c_assigned) 
+          {
+            c_ind[qindex]=sorted_vertices[i].index;
+            c_assigned=1;
+          }
+        else           
+          d_ind[qindex]=sorted_vertices[i].index;
       }
 
   /* We will use a temporary `struct quad_vertex` array to store the
      indexes of the four stars and then make hashes with those stars
      and firmly determine the true positions of C and D. */
-  temp_vertices[0].index=a_ind;
-  temp_vertices[1].index=b_ind;
-  temp_vertices[2].index=c_ind;
-  temp_vertices[3].index=d_ind;
+  temp_vertices[0].index=a_ind[qindex];
+  temp_vertices[1].index=b_ind[qindex];
+  temp_vertices[2].index=c_ind[qindex];
+  temp_vertices[3].index=d_ind[qindex];
 
   /* For a check
   printf("A = (%g, %g) B = (%g, %g) C = (%g, %g) D = (%g, %g)\n", 
-         ra_arr[a_ind], dec_arr[a_ind], ra_arr[b_ind], dec_arr[b_ind], 
-         ra_arr[c_ind], dec_arr[c_ind], ra_arr[d_ind], dec_arr[d_ind] );
+         ra_arr[a_ind[qindex]], dec_arr[a_ind[qindex]], ra_arr[b_ind[qindex]], dec_arr[b_ind[qindex]], 
+         ra_arr[c_ind[qindex]], dec_arr[c_ind[qindex]], ra_arr[d_ind[qindex]], dec_arr[d_ind[qindex]] );
   */
 
   /* Make the hash codes with this configuration of stars. */
-  make_hash_codes(temp_vertices, p, &cx, &cy, &dx, &dy, NULL);
-  printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx, cy, dx, dy);
+  hash_geometric_fix_cd(qindex, temp_vertices, p);
 
-  /* If the positions of star dont follow the given conditions, 
-     swap them. */
-  if(cx > dx || cx+dx>1)
-    {
-      /* Swap c_ind and d_ind. */
-      c_ind=c_ind+d_ind;
-      d_ind=c_ind-d_ind;
-      c_ind=c_ind-d_ind;
-    }
+  hash_brightness(qindex, temp_vertices, p);
+  // printf("rel_brightness = %u\n", rel_brightness[qindex]);
 }
 
 
@@ -656,7 +713,6 @@ make_quads_worker(void *in_prm)
              absolute value, we use distance square(distance^2 = x*x+y*y)
              rather than using sqrt() to find actual distance. */
           qvertices[j].index=sid;
-          qvertices[j].magnitude=p->magnitude->array;
           qvertices[j].distance=(  (ra[sid]-ref_ra)*(ra[sid]-ref_ra)
                                   +(dec[sid]-ref_dec)*(dec[sid]-ref_dec) );
 
@@ -731,29 +787,13 @@ make_quads_worker(void *in_prm)
         }
       // */
 
-      /* Sort according to brightness. */
-      qsort(good_vertices, 4, sizeof(struct quad_vertex), sort_by_brightness);
-
-      /* TODO:
-         Run make hash function and fill the outputs columns for this quad. 
-         This function will be used by find_abcd_index function. It might have to
-         be removed from here. */
-      make_hash_codes(good_vertices, p, &cx[qindex], &cy[qindex], &dx[qindex], &dy[qindex],
-                      &rel_brightness[qindex]);
+      /* Find indexes of a,b,c and calculate and write the hashes. */
+      hash_build_write(qindex, good_vertices, p);
 
       /* For a check:
-      printf("cx = %g, cy = %g, dx = %g, dy = %g\n",  cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
+      printf("cx = %g, cy = %g, dx = %g, dy = %g\n", cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
       */
-      find_abcd_indexes(good_vertices, p);
-      exit(0);
-
-      /* TODO:
-         Store the indexes of the 4 stars in the quad. This portion is
-         movedd to the find_abcd function. */
-      a_ind[qindex]=good_vertices[0].index;
-      b_ind[qindex]=good_vertices[3].index;
-      c_ind[qindex]=good_vertices[1].index;
-      d_ind[qindex]=good_vertices[2].index;
+     exit(0);
 
       /* Clean up. */
       free(qvertices);
