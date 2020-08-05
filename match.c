@@ -357,60 +357,69 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
 {
   size_t i;
   double scale=0;
-  double angle_cab=0, angle_dab=0;
+  double angle_car=0, angle_dar=0;
   double mag_ab=0, mag_ac=0, mag_ad=0;
   double *cx=p->cx->array, *cy=p->cy->array;
   double *dx=p->dx->array, *dy=p->dy->array;
   size_t *c_ind=p->c_ind->array;
   size_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
+  double ref_ra, ref_dec;
 
-  /* Fill the ra and dec arrays. */
+  /* Fill the ra and dec arrays. Here indexes of a, b, c, d
+     are 0, 1, 2, 3 respectively. */
   for(i=0;i<4;++i)
     {
       ra[i]=ra_arr[sorted_vertices[i].index];
       dec[i]=dec_arr[sorted_vertices[i].index];
     }
+  
+  /* Firstly we find a point on the x-axis of the local coordinate
+     system and use it as a reference(point R) so that we can find angles 
+     between CAR and DAR. We assume AB to be angle bisector of the local
+     coordinate system.
 
-  /* TODO: The 45 degree assumption is false. Simply use atan2 here.
-
-     First calculate the angles and add and subtract 45 degrees to make it
-     in frame with the current coordinate system with AB as its angle
-     bisector. */
-  angle_cab=find_angle_aob(ra[1], dec[1], ra[0], dec[0], ra[3], dec[3]);
-
-  angle_dab=find_angle_aob(ra[2], dec[2], ra[0], dec[0], ra[3], dec[3]);
-
-  /* For a check:
-  printf("angle_cab = %g, angle_dab = %g\n", angle_cab, angle_dab);
-  */
-
+     Point R will be the component of AB in x-axis. 
+     Therefore point R = (|AB|cos45, 0). */
+  mag_ab=sqrt((ra[0]-ra[1])*(ra[0]-ra[1])
+               +(dec[0]-dec[1])*(dec[0]-dec[1]));
+  
   /* Make a scaled-down value for the new coordinate system. We want that
                 |AB|=1, and hence scale = 1/|AB|
      where |AB|=sqrt(|AB.ra|^2+|AB.dec|^2).
      This value can be used to scale-down the other distaces mainly,
      AC and AD. */
-  mag_ab=sqrt((ra[0]-ra[3])*(ra[0]-ra[3])
-               +(dec[0]-dec[3])*(dec[0]-dec[3]));
 
   scale=1/mag_ab;
   // printf("scale = %g\n", scale);
 
+  ref_ra =scale*mag_ab*cos(45);
+  ref_dec=0;  
+
+  /* Find angles CAR and DAR. */
+  angle_car=find_angle_aob(ra[2], dec[2], ra[0], dec[0], ref_ra, ref_dec);
+
+  angle_dar=find_angle_aob(ra[3], dec[3], ra[0], dec[0], ref_ra, ref_dec);
+
+  /* For a check:
+  printf("angle_car = %g, angle_dar = %g\n", angle_car, angle_dar);
+  */
+
 
   /* Find |AC| and |AD|. Then use distance to find cos and sin thetas to
      give ra and dec coordinates. */
-  mag_ac=sqrt((ra[1]-ra[3])*(ra[1]-ra[3])
-               +(dec[1]-dec[3])*(dec[1]-dec[3]));
+  mag_ac=sqrt((ra[2]-ra[0])*(ra[2]-ra[0])
+               +(dec[2]-dec[0])*(dec[2]-dec[0]));
 
-  mag_ad=sqrt((ra[2]-ra[3])*(ra[2]-ra[3])
-               +(dec[2]-dec[3])*(dec[2]-dec[3]));
+  mag_ad=sqrt((ra[3]-ra[0])*(ra[3]-ra[0])
+               +(dec[3]-dec[0])*(dec[3]-dec[0]));
 
 
   /* Make the final hash-code. */
-  cx[qindex]=mag_ac*scale*cos(45+angle_cab); /* Cx */
-  cy[qindex]=mag_ac*scale*sin(45+angle_cab); /* Cy */
-  dx[qindex]=mag_ad*scale*cos(45-angle_dab); /* Dx */
-  dy[qindex]=mag_ad*scale*sin(45-angle_dab); /* Dy */
+  cx[qindex]=mag_ac*scale*cos(angle_car); /* Cx */
+  cy[qindex]=mag_ac*scale*sin(angle_car); /* Cy */
+  dx[qindex]=mag_ad*scale*cos(angle_dar); /* Dx */
+  dy[qindex]=mag_ad*scale*sin(angle_dar); /* Dy */
 
   /* If the positions of star dont follow the given conditions, 
    swap them. */
@@ -428,7 +437,10 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
 
 
 
-
+/* Find the relative brightness of the stars in the quad
+   and make a unique number to represtent the relative 
+   brightness of the quad to make it further unique
+   while detection. */
 void
 hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct params *p)
 {
@@ -468,18 +480,24 @@ hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct param
   /* For eg, star A is the a-th star and is either of {0, 1, 2, 3} 
      0 being the lowest value and 3 being the highest value. */
 
-  /* For eg, if a=3 then loop over a_bit and shift by one bit each time. */
+  /* Shift the bits wrt the relative brightness in the quad. */
   a_bit <<= rel_magnitude_index[0];
   b_bit <<= rel_magnitude_index[1];
   c_bit <<= rel_magnitude_index[2];
   d_bit <<= rel_magnitude_index[3];
 
-  // printf("a_bit = %u b_bit = %u c_bit = %u d_bit = %u\n", a_bit, b_bit, c_bit, d_bit);
-  /* for eg, a=3, b=2, c=1, d=0
-     exected output:
-     1 0 0 0   0 1 0 0   0 0 1 0   0 0 0 1 */
+  /* After we have 4 16-bits numbers representing the relative
+     brigtness of each star, we do a bitiwise-or to join them
+     together to give a unique 16-bit number to the quad. 
+     For eg, if a=3, b=2, c=1, d=0 then the exected output in
+     binary system is:
+     1 0 0 0   0 1 0 0   0 0 1 0   0 0 0 1  
+     which is 8737 in decimal system. */
   rel_brightness[qindex] = (a_bit | b_bit | c_bit | d_bit);
-  printf("rel_brightness = %u\n", rel_brightness[qindex]);
+
+  /* For a check:
+    printf("rel_brightness = %u\n", rel_brightness[qindex]);
+  */
 }
 
 
@@ -530,7 +548,6 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   size_t *c_ind=p->c_ind->array;
   size_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
-  uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* Fill the ra and dec arrays. */
   for(i=0;i<4;++i)
@@ -612,8 +629,8 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   /* Make the hash codes with this configuration of stars. */
   hash_geometric_fix_cd(qindex, temp_vertices, p);
 
+  /* Find the relative brightness of the quad. */
   hash_brightness(qindex, temp_vertices, p);
-  // printf("rel_brightness = %u\n", rel_brightness[qindex]);
 }
 
 
@@ -741,8 +758,8 @@ make_quads_worker(void *in_prm)
       */
 
 
-      /* Make the final quad and assign relative positions
-         of sorted stars to it. For C and D, we use the stars
+      /* Make the temporary quad and assign relative positions
+         of sorted stars to it. For temporaay C and D, we use the stars
          at 0.5 and 0.75 quantiles respectively. */
       switch(nstars)
         {
@@ -787,13 +804,13 @@ make_quads_worker(void *in_prm)
         }
       // */
 
-      /* Find indexes of a,b,c and calculate and write the hashes. */
+      /* Find indexes of a,b,c,d and calculate and write the hashes. */
       hash_build_write(qindex, good_vertices, p);
 
       /* For a check:
       printf("cx = %g, cy = %g, dx = %g, dy = %g\n", cx[qindex], cy[qindex], dx[qindex], dy[qindex]);
       */
-     exit(0);
+    //  exit(0);
 
       /* Clean up. */
       free(qvertices);
@@ -881,6 +898,7 @@ int main()
 	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
   size_t num_threads=1;
   char *kd_tree_outname="kd-tree-output.fits";
+  char *quad_outname="quad-out.fits";
 
 
   /* Internal. */
@@ -923,9 +941,9 @@ int main()
   gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
 
   /* Write the quad calculation into a file. */
-  p.dy->next=NULL;
+  p.rel_brightness->next=NULL;
   gal_table_write(p.cx, NULL, GAL_TABLE_FORMAT_BFITS,
-                  kd_tree_outname, "quad-info.fits", 0);
+                  quad_outname, "quad-info", 0);
 
 
   /* Calculate kd-tree. 
