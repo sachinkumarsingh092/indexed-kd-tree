@@ -15,9 +15,9 @@ REGION :=
 
 
 compile: ${PROGNAME}.c
-	if [[ -a healpix-test.fits ]];  \
+	if [[ -a kdtree-out.fits ]];  \
 	then							\
-	    rm healpix-test.fits;		\
+	    rm kdtree-out.fits;		\
 	fi;								\
 	${CC} ${CFLAGS} $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
 

@@ -361,8 +361,8 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
   double mag_ab=0, mag_ac=0, mag_ad=0;
   double *cx=p->cx->array, *cy=p->cy->array;
   double *dx=p->dx->array, *dy=p->dy->array;
-  size_t *c_ind=p->c_ind->array;
-  size_t *d_ind=p->d_ind->array;
+  uint32_t *c_ind=p->c_ind->array;
+  uint32_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
   double ref_ra, ref_dec;
 
@@ -543,10 +543,10 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   int perm_set[4][4]={0}, c_assigned=0;
   double current_max_dis=DBL_MIN;
   struct quad_vertex temp_vertices[4]={0};
-  size_t *a_ind=p->a_ind->array;
-  size_t *b_ind=p->b_ind->array;
-  size_t *c_ind=p->c_ind->array;
-  size_t *d_ind=p->d_ind->array;
+  uint32_t *a_ind=p->a_ind->array;
+  uint32_t *b_ind=p->b_ind->array;
+  uint32_t *c_ind=p->c_ind->array;
+  uint32_t *d_ind=p->d_ind->array;
   double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
 
   /* Fill the ra and dec arrays. */
@@ -661,10 +661,10 @@ make_quads_worker(void *in_prm)
   /* For easy reading. */
   double *ra=p->ra->array;
   double *dec=p->dec->array;
-  size_t *a_ind=p->a_ind->array;
-  size_t *b_ind=p->b_ind->array;
-  size_t *c_ind=p->c_ind->array;
-  size_t *d_ind=p->d_ind->array;
+  uint32_t *a_ind=p->a_ind->array;
+  uint32_t *b_ind=p->b_ind->array;
+  uint32_t *c_ind=p->c_ind->array;
+  uint32_t *d_ind=p->d_ind->array;
   size_t *bsi=p->brightest_star_id;
   double max_dist=p->max_star_dis_in_quad;
   double *cx=p->cx->array, *cy=p->cy->array;
@@ -855,23 +855,23 @@ quad_allocate_output(struct params *p, size_t num_quads)
 	                                minmapsize, quitemmap, "rel-brightness", "none",
 													         "relative brightness stored as bit-flags");
 
-  p->a_ind=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->a_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                        minmapsize, quitemmap, "A-index", "counter",
 													"index of star A in the quad");
-  p->b_ind=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->b_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                        minmapsize, quitemmap, "B-index", "counter",
 													"index of star B in the quad");
-  p->c_ind=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->c_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                        minmapsize, quitemmap, "C-index", "counter",
 													"index of star C in the quad");
-  p->d_ind=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->d_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                        minmapsize, quitemmap, "D-index", "counter",
 													"index of star D in the quad");
 
-  p->left=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->left=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                       minmapsize, quitemmap, "KD-left-index", "counter",
 												 "index of left subtree");  
-  p->right=gal_data_alloc(NULL, GAL_TYPE_SIZE_T, 1, &num_quads, NULL, 0,
+  p->right=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                       minmapsize, quitemmap, "KD-right-index", "counter",
 												 "index of right subtree");  
 
