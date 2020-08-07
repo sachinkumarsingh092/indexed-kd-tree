@@ -3,9 +3,9 @@
 #include <errno.h>
 #include <error.h>
 
+#include <gnuastro/data.h>
 #include <gnuastro/table.h>
 #include <gnuastro/blank.h>
-#include <gnuastro/data.h>
 
 
 struct kdtree_node
@@ -42,7 +42,7 @@ kdtree_node_swap(struct kdtree_node *x, struct kdtree_node *y)
 
    return : distance(squared) between 2 nodes of the tree.
 */
-double
+static double
 kdtree_distance_find(struct kdtree_node *a, struct kdtree_node *b, gal_data_t **coords, size_t dim)
 {
   size_t i;
@@ -153,7 +153,7 @@ kdtree_fill_subtrees(struct kdtree_node *current_node, size_t remaining,
     {
       current_axis = (current_axis + 1) % dim;
       median_node->left  = kdtree_fill_subtrees(current_node,
-                                     						median_node - current_node,
+                                     						median_node-current_node,
                                      						current_axis, coords, dim);
       median_node->right = kdtree_fill_subtrees(median_node + 1,
                                      						current_node + remaining - (median_node + 1),
@@ -164,70 +164,6 @@ kdtree_fill_subtrees(struct kdtree_node *current_node, size_t remaining,
 
 }
 
-
-
-
-
-
-/* Find the nearest neighbour of the `point`.
-   See `https://en.wikipedia.org/wiki/K-d_tree#Nearest_neighbour_search`
-   for more information.
-
-  return:
-  nearest : The nearest node to the search point.
-  least_dist : The distance from the search point to the nearest point.
-  */
-uint32_t
-kdtree_nearest_neighbour(struct kdtree_node *root, struct kdtree_node *point,
-												 size_t current_axis, size_t dim,
-												 struct kdtree_node **nearest, double *least_dist,
-												 double *coordinate, gal_data_t **coords)
-{
-  double d, dx, dx2;
-
-  /* If no tree/subtree present, don't search further. */
-  if(!root) return GAL_BLANK_UINT32;
-
-  /* The distance between search point to the current nearest.*/
-  d = kdtree_distance_find(root, point, coords, dim);
-
-  /* Distance between the splitting coordinate of the search
-  point and current node*/
-  dx = coordinate[root->index] - coordinate[point->index];
-  dx2 = dx*dx;
-
-  /* Check if the current node is nearer than the previous
-     nearest node. */
-  if(!*nearest || d < *least_dist)
-    {
-      *least_dist = d;
-      *nearest = root;
-    }
-
-  /* If exact match found(least distance 0), return it. */
-  if(!*least_dist) return GAL_BLANK_UINT32;
-
-  current_axis = (current_axis + 1) % dim;
-
-  /* Recursively search in subtrees. */
-  kdtree_nearest_neighbour(dx > 0 ? root->left : root->right, point,
-										current_axis, dim, nearest, least_dist,
-										coordinate, coords);
-
-  /* Since the hyperplanes are all axis-aligned, to check
-  if there is a node in other branch that is nearer to the
-  search node is done by a simple comparison to see whether the
-  distance between the splitting coordinate of the search
-  point and current node is lesser(i.e on same side of hyperplane)
-  than the distance (overall coordinates) from the search point to
-  the current nearest. */
-  if(dx2 >= *least_dist) return GAL_BLANK_UINT32;
-  kdtree_nearest_neighbour(dx > 0 ? root->right : root->left, point,
-									  current_axis, dim, nearest, least_dist,
-										coordinate, coords);
-
-	return GAL_BLANK_UINT32;
-}
 
 
 
@@ -295,7 +231,7 @@ gal_kdtree_create(gal_data_t *coords_raw)
 	/* Write the left and right indexes into the final output. */
 	for(i=0; i<coords_raw->size; ++i)
 		{
-			printf("i=%zu, %s, %s\n", i, nodes[i].left?"Allocated":"Not", nodes[i].right?"Allocated":"Not");
+			// printf("i=%zu, %s, %s\n", i, nodes[i].left?"Allocated":"Not", nodes[i].right?"Allocated":"Not");
 			left_arr[nodes[i].index]=nodes[i].left ? nodes[i].left->index : GAL_BLANK_UINT32;
 			right_arr[nodes[i].index]=nodes[i].right ? nodes[i].right->index : GAL_BLANK_UINT32;
 		}
@@ -313,6 +249,71 @@ gal_kdtree_create(gal_data_t *coords_raw)
 	/* Return results. */
 	return left;
 }
+
+
+
+
+
+/* Find the nearest neighbour of the `point`.
+   See `https://en.wikipedia.org/wiki/K-d_tree#Nearest_neighbour_search`
+   for more information.
+
+  return:
+  nearest : The nearest node to the search point.
+  least_dist : The distance from the search point to the nearest point.
+  */
+uint32_t
+gal_kdtree_nearest_neighbour(struct kdtree_node *current_node, struct kdtree_node *point,
+												     size_t current_axis, size_t dim,
+												     struct kdtree_node **nearest, double *least_dist,
+												     double *coordinate, gal_data_t **coords)
+{
+  double d, dx, dx_square;
+
+  /* If no tree/subtree present, don't search further. */
+  if(!current_node) return GAL_BLANK_UINT32;
+
+  /* The distance between search point to the current nearest.*/
+  d = kdtree_distance_find(current_node, point, coords, dim);
+
+  /* Distance between the splitting coordinate of the search
+     point and current node*/
+  dx = coordinate[current_node->index] - coordinate[point->index];
+  dx_square = dx*dx;
+
+  /* Check if the current node is nearer than the previous
+     nearest node. */
+  if(!*nearest || d < *least_dist)
+    {
+      *least_dist = d;
+      *nearest = current_node;
+    }
+
+  /* If exact match found(least distance 0), return it. */
+  if(!*least_dist) return (*nearest)->index;
+
+  current_axis = (current_axis + 1) % dim;
+
+  /* Recursively search in subtrees. */
+  gal_kdtree_nearest_neighbour(dx > 0 ? current_node->left : current_node->right, point,
+										           current_axis, dim, nearest, least_dist,
+										           coordinate, coords);
+
+  /* Since the hyperplanes are all axis-aligned, for checking
+  if there is a node in other branch that is nearer to the
+  search node,we do a simple comparison to see whether the
+  distance between the splitting coordinate of the search
+  point and current node is lesser(i.e on same side of hyperplane)
+  than the distance (overall coordinates) from the search point to
+  the current nearest. */
+  if(dx_square >= *least_dist) return GAL_BLANK_UINT32;
+  gal_kdtree_nearest_neighbour(dx > 0 ? current_node->right : current_node->left, point,
+									             current_axis, dim, nearest, least_dist,
+										           coordinate, coords);
+
+	return (*nearest)->index;
+}
+
 
 
 
