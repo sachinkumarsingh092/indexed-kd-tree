@@ -190,16 +190,26 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t remaining,
 
       /* Fill left and right subtrees by calling this functions again. */
       printf("\nSETTING LEFT subtree (in dim %zu, for med=%zu)\n", dim_current, node_median);
-      p->left[node_median]  = kdtree_fill_subtrees(p, node_median-node_current,
-						   dim_current, node_current);
-      printf("\nLEFT NODE[%zu]=%u\n",p->input_row[node_median], p->left[node_median]);
+      p->left[p->input_row[node_median]] = kdtree_fill_subtrees(p, node_median-node_current,
+								 dim_current, node_current);
+      printf("\nLEFT NODE[%zu]=%u\n",p->input_row[node_median],
+	     p->left[p->input_row[node_median]]);
 
       // if(p->input_row[node_median]==4) exit(0);
 
       printf("\nSETTING RIGHT subtree (in dim %zu, for med=%zu)\n", dim_current, node_median);
-      p->right[node_median] = kdtree_fill_subtrees(p, node_current + remaining - (node_median + 1),
-						   dim_current, node_median+1);
-      printf("\nRIGHT NODE[%zu]=%u\n",p->input_row[node_median], p->right[node_median]);
+      printf("\n[C:%zu] nc, r, nm: %zu, %zu, %zu (remaining-arg: %zu)",
+	     counter, node_current, remaining, node_median,
+	     node_current + remaining - (node_median + 1));
+
+      p->right[p->input_row[node_median]] = kdtree_fill_subtrees(p,
+								 /* ( p->input_row[node_median]==2
+								   ? 1
+								   : node_current + remaining - (node_median + 1) ),*/
+								 node_current + remaining - (node_median + 1),
+								 dim_current, node_median+1);
+      printf("\nRIGHT NODE[%zu]=%u\n",p->input_row[node_median],
+	     p->right[p->input_row[node_median]]);
     }
 
   printf("\n%s (END %zu)\n", __func__, counter);
