@@ -204,8 +204,8 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
   printf("\nLEFT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
           p->left[node_median], node_median);
 
-  printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
 
+  printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
   /* Right and left nodes are non-symytrical. Node left can be equal to node median
      when there are only 2 points and at this point, there can never be a singel ponit
      (node left == node right). But node right can never be equal to node median. 

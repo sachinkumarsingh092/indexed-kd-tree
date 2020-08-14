@@ -1,6 +1,7 @@
-from collections import namedtuple
-from operator import itemgetter
 from pprint import pformat
+from operator import itemgetter
+from collections import namedtuple
+
 
 class Node(namedtuple('Node', 'location left_child right_child')):
     def __repr__(self):
@@ -27,7 +28,15 @@ def kdtree(point_list, depth: int = 0):
 
 def main():
     """Example usage"""
-    point_list = 
+    point_list = []
+    with open("./dummytable.txt", 'r') as f:
+        for line in f:
+            if not '#' in line:
+                res = tuple(line.rstrip('\n').split(' '))
+                point_list.append(res)
+            else:
+                break
+
     tree = kdtree(point_list)
     print(tree)
 
