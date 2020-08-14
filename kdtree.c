@@ -58,7 +58,7 @@ kdtree_node_swap(struct kdtree_params *p, size_t node1, size_t node2)
 */
 static size_t
 kdtree_median_find(struct kdtree_params *p, size_t node_left,
-		   size_t node_right, double *coordinate)
+		               size_t node_right, double *coordinate)
 {
   double pivot_value;
   size_t i, store_i, node_pivot, node_k;
@@ -66,17 +66,21 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
   /* False state, this is a programming error. */
   if (node_right < node_left)
     error(EXIT_FAILURE, 0, "%s: a bug! Please contact us to fix the problem! "
-	  "For some reason, the node_right is smaller than node_left", __func__);
+	  "For some reason, the node_right (%zu) is smaller than node_left (%zu)",
+    __func__, node_right, node_left);
 
   /* If the two nodes are the same, just return the node. */
-  if (node_right == node_left) return node_left;
+  if (node_right == node_left)
+    error(EXIT_FAILURE, 0, "%s: a bug! Please contact us to fix the problem! "
+	  "For some reason, the node_right (%zu) is equal to node_left (%zu)",
+    __func__, node_right, node_left);
 
   /* The middle value (here used as pivot) between node_left and node_right. */
   node_k=node_left+(node_right-node_left)/2;
 
   /* For a check. */
   printf("\n\n%s\n\tnl=%zu, nr=%zu, nm=%zu\n", __func__, node_left,
-	 node_right, node_k);
+	       node_right, node_k);
   for(i=0;i<p->coords[0]->size; ++i)
     printf("input row[%zu]=%zu  coordinates[%zu]=%f      (before)\n",
            i, p->input_row[i], i, coordinate[p->input_row[i]]);
@@ -86,21 +90,13 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
   while(1)
     {
       /* In every run, 'node_left' and 'node_right' change, so the
-	 pivot index and pivot value change. */
+	       pivot index and pivot value change. */
       node_pivot = node_left+(node_right-node_left)/2;
       pivot_value = coordinate[p->input_row[node_pivot]];
       printf("\tpv=%f\n", pivot_value);
 
-      // printf("\tBEFORE nl=%zu, nr=%zu, nm=%zu, p->input_row[nr]=%f, p->input_row[nm]=%f\n",
-      //        node_left, node_right, node_k, coordinate[p->input_row[node_right]],
-      //        coordinate[p->input_row[node_k]]);
-
       /* Move the pivot_value to the right/larger end. */
       kdtree_node_swap(p, node_pivot, node_right);
-
-      // printf("\tAFTER nl=%zu, nr=%zu, nm=%zu, p->input_row[nr]=%f, p->input_row[nm]=%f\n",
-      //        node_left, node_right, node_k, coordinate[p->input_row[node_right]],
-      //        coordinate[p->input_row[node_k]]);
 
       /* Move all nodes smaller than pivot value to the left/smaller side of
          the nodes. */
@@ -110,15 +106,13 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
           {
             /* Move ith-node to the left/smaller side, and increment store_i */
             kdtree_node_swap(p, store_i, i);
-	    store_i++;
 
             /* Prepare the place of next smaller node. */
-            // printf("\t\tIN COND i=%zu, node_pivot=%zu, p->input[ns]=%f, pivotV=%f\n",
-            //         i, node_pivot, coordinate[p->input_row[node_pivot]], pivot_value);
+	          store_i++;
           }
 
       /* Move pivot, to be just after of all the nodes that are less
-	 than it (because pivot was moved to 'node_right'). */
+	       than it (because pivot was moved to 'node_right'). */
       kdtree_node_swap(p, node_right, store_i);
 
       /* Set node_pivot to be the store_i. */
@@ -161,20 +155,22 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
    return : a balanced kd-tree. */
 static uint32_t
 kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
-		     size_t node_right, size_t depth)
+		                 size_t node_right, size_t depth)
 {
   /* Set the working axis. */
   size_t axis=depth % p->ndim;
 
   /********DEBUGGING*********/
   static size_t counter=0;
-  printf("\n%s (START %zu)\nl-r=%zu\n", __func__, ++counter, node_right-node_left);
+  printf("\n%s (START %zu)\n l=%zu, r=%zu, l-r=%zu\n", 
+          __func__, ++counter, node_left, node_right, node_right-node_left);
 
   double *carr=p->coords[axis]->array;
   for(size_t i=0;i<p->coords[0]->size; ++i)
     printf("%zu: %-10f, %-10u, %-10u %s\n",p->input_row[i], carr[p->input_row[i]],
-	   p->left[i], p->right[i],
-	   i>=node_left && i<=node_right ? "#": "");
+	  p->left[i], p->right[i],
+	  i>=node_left && i<=node_right ? "#": "");
+
   printf("\n");
   /*************************/
 
@@ -184,34 +180,39 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
 
   /* Recursion terminates when the left and right nodes are the
      same. */
-  if(node_left==node_right) return GAL_BLANK_UINT32;
+  if(node_left==node_right) return p->input_row[node_left];
 
   /* Find the median node. */
   node_median=kdtree_median_find(p, node_left, node_right,
                                  p->coords[axis]->array);
 
-  /* For a check */
-  printf("node_left=%zu, node_median=%zu (input[c]=%f input[m]=%f)\n",
-         node_left, node_median,
-         carr[p->input_row[node_left]],
-         carr[p->input_row[node_median]]);
-  // exit(0);
-  /**/
 
-  /* If median index is present, set the left and right subtree. */
-  if(node_median != GAL_BLANK_UINT32)
-    {
-      /* Fill left and right subtrees by calling this functions again. */
-      printf("\nSETTING LEFT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
-      p->left[p->input_row[node_median]] = kdtree_fill_subtrees(p, node_left, node_median, depth+1);
-      printf("\nLEFT NODE[%zu]=%u\n",p->input_row[node_median],
-	     p->left[p->input_row[node_median]]);
+  /* Fill left and right subtrees by calling this functions again. */
+  printf("\nSETTING LEFT subtree (in axis %zu, l=%zu, m=%zu, r=%zu)\n", axis,
+         node_left, node_median, node_right);
 
-      printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
-      p->right[p->input_row[node_median]] = kdtree_fill_subtrees(p, node_median+1, node_right, depth+1);
-      printf("\nRIGHT NODE[%zu]=%u\n",p->input_row[node_median],
-	     p->right[p->input_row[node_median]]);
-    }
+  /* node_median == 0 : We are in the lowest node (leaf) so no need 
+                        to continue seachin recursively.
+     When we only have 2 nodes and the median is equal to the left, 
+     its the end of the subtree.
+    */
+  if(node_median)
+    p->left[node_median] = ( (node_median == node_left)
+                              ? GAL_BLANK_UINT32
+                              : kdtree_fill_subtrees(p, node_left, node_median-1, depth+1) );
+
+  printf("\nLEFT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
+          p->left[node_median], node_median);
+
+  printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
+
+  /* Right and left nodes are non-symytrical. Node left can be equal to node median
+     when there are only 2 points and at this point, there can never be a singel ponit
+     (node left == node right). But node right can never be equal to node median. 
+     So we don't check for it.*/
+  p->right[node_median] = kdtree_fill_subtrees(p, node_median+1, node_right, depth+1);
+  printf("\nRIGHT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
+          p->right[node_median], node_median);
 
   printf("\n%s (END %zu)\n", __func__, counter);
 
