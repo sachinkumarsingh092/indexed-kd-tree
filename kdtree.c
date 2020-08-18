@@ -222,8 +222,14 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
 
 
 
-
-
+/* High level function to construct the kd-tree. 
+   This function initilises and created the tree
+   in top-down manner. 
+   
+   Returns:
+   A list containing the indexes of left and right
+   subtrees. 
+*/
 gal_data_t *
 gal_kdtree_create(gal_data_t *coords_raw)
 {
@@ -322,6 +328,48 @@ int main()
   return EXIT_SUCCESS;
 }
 
+
+
+
+
+/* Return the distance between 2 given nodes.
+   This distance is equivalent to the radius of
+   the hypersphere having node1 as the center.
+   
+   Return:
+   Radial distace from node1 to node2.
+*/
+static double
+kdtree_distance_find(struct kdtree_params *p, size_t node1,
+		                 size_t node2)
+{
+  size_t i;
+  double *carr;
+  double t_distance, node_distance=0;
+
+  /* For all dimentions. */
+  for(i=0; i<p->ndim; ++i)
+    {
+      carr=p->coords[i]->array;
+      t_distance=carr[p->input_row[node1]]
+                 -carr[p->input_row[node2]];
+
+      node_distance += t_distance*t_distance;
+    }
+
+  return node_distance;
+}
+
+
+
+
+/* Return a array of indexes of the k-nearest neighbours. */
+size_t *
+gal_kdtree_nearest_neighbour(struct params *p, gal_data_t **coords,
+                             gal_data_t *kdtree, double *point, size_t k)
+{
+  
+}
 
 
 
