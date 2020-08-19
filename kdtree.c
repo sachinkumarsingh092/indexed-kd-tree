@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <error.h>
+#include <float.h>
 
 #include <gnuastro/data.h>
 #include <gnuastro/table.h>
@@ -79,12 +80,13 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
   /* The middle value (here used as pivot) between node_left and node_right. */
   node_k=node_left+(node_right-node_left)/2;
 
-  /* For a check. */
+  /* For a check.
   printf("\n\n%s\n\tnl=%zu, nr=%zu, nm=%zu\n", __func__, node_left,
 	       node_right, node_k);
   for(i=0;i<p->coords[0]->size; ++i)
     printf("input row[%zu]=%zu  coordinates[%zu]=%f      (before)\n",
            i, p->input_row[i], i, coordinate[p->input_row[i]]);
+  */
 
   /* Loop until the median (for the current axis) is returned (and in
      the mean-while, the underlying indexs are sorted). */
@@ -94,7 +96,6 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
 	       pivot index and pivot value change. */
       node_pivot = node_left+(node_right-node_left)/2;
       pivot_value = coordinate[p->input_row[node_pivot]];
-      printf("\tpv=%f\n", pivot_value);
 
       /* Move the pivot_value to the right/larger end. */
       kdtree_node_swap(p, node_pivot, node_right);
@@ -119,10 +120,10 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
       /* Set node_pivot to be the store_i. */
       node_pivot=store_i;
 
-      // /* For a check
+      /* For a check
       printf("\tnode_pivot=%zu, node_k=%zu, node_right=%zu\n\n",
              node_pivot, node_k, node_right);
-      // */
+      */
 
       /* If median is found, break the loop and return the node_k. */
       if (node_k == node_pivot) break;
@@ -133,12 +134,12 @@ kdtree_median_find(struct kdtree_params *p, size_t node_left,
       else                     node_left  = node_pivot + 1;
     }
 
-  /* For a check. */
+  /* For a check
   for(i=0;i<p->coords[0]->size; ++i)
     printf("input row[%zu]=%zu  coordinates[%zu]=%f      (after)\n",
            i, p->input_row[i], i, coordinate[p->input_row[i]]);
   printf("returned median = %zu\n", node_k);
-  /**/
+  */
 
   /* Return the pivot node. */
   return node_pivot;
@@ -162,17 +163,17 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
   size_t axis=depth % p->ndim;
 
   /********DEBUGGING*********/
-  static size_t counter=0;
-  printf("\n%s (START %zu)\n l=%zu, r=%zu, l-r=%zu\n", 
-          __func__, ++counter, node_left, node_right, node_right-node_left);
+  // static size_t counter=0;
+  // printf("\n%s (START %zu)\n l=%zu, r=%zu, l-r=%zu\n", 
+  //         __func__, ++counter, node_left, node_right, node_right-node_left);
 
-  double *carr=p->coords[axis]->array;
-  for(size_t i=0;i<p->coords[0]->size; ++i)
-    printf("%zu: %-10f, %-10u, %-10u %s\n",p->input_row[i], carr[p->input_row[i]],
-	  p->left[i], p->right[i],
-	  i>=node_left && i<=node_right ? "#": "");
+  // double *carr=p->coords[axis]->array;
+  // for(size_t i=0;i<p->coords[0]->size; ++i)
+  //   printf("%zu: %-10f, %-10u, %-10u %s\n",p->input_row[i], carr[p->input_row[i]],
+	//   p->left[i], p->right[i],
+	//   i>=node_left && i<=node_right ? "#": "");
 
-  printf("\n");
+  // printf("\n");
   /*************************/
 
   /* node_median is a counter over the `input_row` array.
@@ -189,8 +190,8 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
 
 
   /* Fill left and right subtrees by calling this functions again. */
-  printf("\nSETTING LEFT subtree (in axis %zu, l=%zu, m=%zu, r=%zu)\n", axis,
-         node_left, node_median, node_right);
+  // printf("\nSETTING LEFT subtree (in axis %zu, l=%zu, m=%zu, r=%zu)\n", axis,
+  //        node_left, node_median, node_right);
 
   /* node_median == 0 : We are in the lowest node (leaf) so no need 
                         to continue seachin recursively.
@@ -202,20 +203,20 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
                               ? GAL_BLANK_UINT32
                               : kdtree_fill_subtrees(p, node_left, node_median-1, depth+1) );
 
-  printf("\nLEFT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
-          p->left[node_median], node_median);
+  // printf("\nLEFT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
+  //         p->left[node_median], node_median);
 
 
-  printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
+  // printf("\nSETTING RIGHT subtree (in axis %zu, for node_median=%zu)\n", axis, node_median);
   /* Right and left nodes are non-symytrical. Node left can be equal to node median
      when there are only 2 points and at this point, there can never be a singel ponit
      (node left == node right). But node right can never be equal to node median. 
      So we don't check for it.*/
   p->right[node_median] = kdtree_fill_subtrees(p, node_median+1, node_right, depth+1);
-  printf("\nRIGHT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
-          p->right[node_median], node_median);
+  // printf("\nRIGHT NODE[%zu]=%u, node_median=%lu\n",p->input_row[node_median],
+  //         p->right[node_median], node_median);
 
-  printf("\n%s (END %zu)\n", __func__, counter);
+  // printf("\n%s (END %zu)\n", __func__, counter);
 
   return p->input_row[node_median];
 }
@@ -231,10 +232,6 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
   gal_data_t *tmp;
   p->ndim=gal_list_data_number(coords_raw);
 
-  /* Allocate and initialise the kd-tree input_row. */
-  p->input_row=gal_pointer_allocate(GAL_TYPE_SIZE_T, coords_raw->size, 0,
-                                   __func__, "p.input_row");
-  for(i=0; i<coords_raw->size; ++i)	p->input_row[i]=i;
 
   /* Allocate the coordinate array. */
   errno=0;
@@ -255,31 +252,62 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
       /* Go to the next column list. */
       tmp=tmp->next;
     }
+  
+  if(p->left_col)
+    {
+      if(p->left_col->next==NULL)
+        error(EXIT_FAILURE, 0, "%s: the input kd-tree should be 2 columns",
+              __func__);
+      
+      /* Set the right column. */
+      p->right_col=p->left_col->next;
+      if(p->right_col->next)
+        error(EXIT_FAILURE, 0, "%s: the input kd-tree shoudn't be more than 2 columns",
+              __func__);
+
+      if(p->left_col->size!=p->right_col->size)
+        error(EXIT_FAILURE, 0, "%s: left and right columns should have same size",
+              __func__);
+
+      if(p->left_col->type!=GAL_TYPE_UINT32)
+        error(EXIT_FAILURE, 0, "%s: left kd-tree column should be uint32_t",
+              __func__);
+
+      if(p->right_col->type!=GAL_TYPE_UINT32)
+        error(EXIT_FAILURE, 0, "%s: right kd-tree column should be uint32_t",
+              __func__);
+      
+      /* Initailise left and right arrays. */
+      p->left=p->left_col->array;
+      p->right=p->right_col->array;
+    }
+  else
+    {
+      /* Allocate and initialise the kd-tree input_row. */
+      p->input_row=gal_pointer_allocate(GAL_TYPE_SIZE_T, coords_raw->size, 0,
+                                   __func__, "p.input_row");
+      for(i=0; i<coords_raw->size; ++i)	p->input_row[i]=i;
+
+      /* Allocate output and initialize them. */
+      p->left_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
+              coords_raw->minmapsize, coords_raw->quietmmap, "left",
+              "index", "index of left subtree in the kd-tree");
+      p->right_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
+              coords_raw->minmapsize, coords_raw->quietmmap, "right",
+              "index", "index of right subtree in the kd-tree");
+
+      /* Fill the elements of the params structure. */
+      p->left_col->next=p->right_col;
+
+      /* Initialise the left and right arrays. */
+      p->left=p->left_col->array;
+      p->right=p->right_col->array;
+      for(i=0;i<coords_raw->size;++i)
+        { p->left[i]=p->right[i]=GAL_BLANK_UINT32; }
+    }
+
 }
 
-
-
-
-static void
-kdtree_prepare_leftright(struct kdtree_params *p, gal_data_t *coords_raw)
-{
-  size_t i;
-
-  /* Allocate output and initialize them. */
-  p->left_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-		      coords_raw->minmapsize, coords_raw->quietmmap, "left",
-		      "index", "index of left subtree in the kd-tree");
-  p->right_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-		       coords_raw->minmapsize, coords_raw->quietmmap, "right",
-		       "index", "index of right subtree in the kd-tree");
-
-  /* Fill the elements of the params structure. */
-  p->left_col->next=p->right_col;
-  p->left=p->left_col->array;
-  p->right=p->right_col->array;
-  for(i=0;i<coords_raw->size;++i)
-    { p->left[i]=p->right[i]=GAL_BLANK_UINT32; }
-}
 
 
 
@@ -316,21 +344,21 @@ kdtree_cleanup(struct kdtree_params *p, gal_data_t *coords_raw)
    subtrees. 
 */
 gal_data_t *
-gal_kdtree_create(gal_data_t *coords_raw)
+gal_kdtree_create(gal_data_t *coords_raw, size_t *root)
 {
-  size_t i;
-  struct kdtree_params p;
+  struct kdtree_params p={0};
 
   /* Initialise the params structure. */
   kdtree_prepare(&p, coords_raw);
-  kdtree_prepare_leftright(&p, coords_raw);
 
   /* Fill the kd-tree*/
-  kdtree_fill_subtrees(&p, 0, coords_raw->size-1, 0);
+  *root=kdtree_fill_subtrees(&p, 0, coords_raw->size-1, 0);
 
-  /* For a check before permutation. */
+  /* For a check 
+  size_t i;
   for(i=0;i<coords_raw->size;++i)
     printf("%-15zu%-15u%-15u\n", p.input_row[i], p.left[i], p.right[i]);
+  */
 
   /* Do a reverse permutation to sort the indexes back in the input order. */
   gal_permutation_apply_inverse (p.left_col, p.input_row);
@@ -347,49 +375,16 @@ gal_kdtree_create(gal_data_t *coords_raw)
 
 
 
-int main()
-{
-  char *inputname="dummytable.txt";
-  char *outputname="kdtree-out.fits";
-
-  gal_data_t *output;
-  /* Read the input table. */
-  gal_data_t *coords=gal_table_read (inputname, "1",
-				     NULL, NULL, GAL_TABLE_SEARCH_NAME,
-				     0, -1, 0, NULL);
-
-  /* Construct a tree. */
-  output=gal_kdtree_create(coords);
-
-  /* DEBUGGING
-  uint32_t *temp=output->array;
-  uint32_t *ntemp=output->next->array;
-  for(int i=0;i<output->size; ++i)
-  printf("```%u %u\n", temp[i], ntemp[i]);
-  */
-
-  /* Write output. */
-  gal_table_write(output, NULL, GAL_TABLE_FORMAT_BFITS,
-                  outputname, "kdtree-info", 0);
-
-  return EXIT_SUCCESS;
-}
-
-
-
-
-#if 0
-
 /* Return the distance between 2 given nodes.
    This distance is equivalent to the radius of
    the hypersphere having node1 as the center.
    
    Return:
-   Radial distace from node1 to node2.
+   Radial distace from given point to the node.
 */
 static double
-kdtree_distance_find(struct kdtree_params *p, size_t node1,
-		                 size_t node2)
+kdtree_distance_find(struct kdtree_params *p, size_t node,
+		                 double *point)
 {
   size_t i;
   double *carr;
@@ -399,8 +394,7 @@ kdtree_distance_find(struct kdtree_params *p, size_t node1,
   for(i=0; i<p->ndim; ++i)
     {
       carr=p->coords[i]->array;
-      t_distance=carr[p->input_row[node1]]
-                 -carr[p->input_row[node2]];
+      t_distance=carr[node]-point[i];
 
       node_distance += t_distance*t_distance;
     }
@@ -410,117 +404,152 @@ kdtree_distance_find(struct kdtree_params *p, size_t node1,
 
 
 
-
-
-
-
-/* Return a array of indexes of the k-nearest neighbours. 
-   Use a max-heap to store the k nearest neighbours.
-   
-*/
-size_t *
-gal_kdtree_nearest_neighbour(gal_data_t *coords_raw, uint32_t node_current,
-                             gal_data_t *kdtree, double *point, size_t k)
-{
-  /* */
-
-}
-
-
-
-
-
-
-
-/* Find the distance between 2 nodes of the tree.
-
-   return : distance(squared) between 2 nodes of the tree.
-*/
-static double
-kdtree_distance_find(struct kdtree_node *a, struct kdtree_node *b,
-		     gal_data_t **coords, size_t dim)
-{
-  size_t i;
-  double t_dis, dis = 0;
-
-  /* For all points in the node. */
-  for(i=0; i<dim; ++i)
-    {
-      t_dis = (	(double *)coords[i]->array)[a->index]
-	-((double *)coords[i]->array)[b->index];
-
-      /* As only the relative magnitude of distance is required,
-         it is efficient to return distance square rather than using
-         `sqrt()` function to calculate actual distace value. */
-      dis += t_dis * t_dis;
-    }
-
-  return dis;
-}
-
-
-
-
-
 /* Find the nearest neighbour of the `point`.
    See `https://en.wikipedia.org/wiki/K-d_tree#Nearest_neighbour_search`
    for more information.
-
-  return:
-  nearest : The nearest node to the search point.
-  least_dist : The distance from the search point to the nearest point.
-  */
-uint32_t
-gal_kdtree_nearest_neighbour(struct kdtree_node *current_node,
-			     struct kdtree_node *point,
-			     size_t current_axis, size_t dim,
-			     struct kdtree_node **nearest, double *least_dist,
-			     double *coordinate, gal_data_t **coords)
+*/
+static void
+kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
+                         double *point, double *least_dist,
+                         size_t *out_nn, size_t depth)
 {
-  double d, dx, dx_square;
+  double d, dx, dx2;
+  size_t axis=depth % p->ndim;    /* Set the working axis. */
+  double *coordinates=p->coords[axis]->array;
 
-  /* If no tree/subtree present, don't search further. */
-  if(!current_node) return GAL_BLANK_UINT32;
+  /* If no subtree present, don't search further. */
+  if(node_current==GAL_BLANK_UINT32) return;
 
-  /* The distance between search point to the current nearest.*/
-  d = kdtree_distance_find(current_node, point, coords, dim);
+  /* The distance between search point to the current node.*/
+  d = kdtree_distance_find(p, node_current, point);
 
   /* Distance between the splitting coordinate of the search
-     point and current node*/
-  dx = coordinate[current_node->index] - coordinate[point->index];
-  dx_square = dx*dx;
+     point and current node. */
+  dx = coordinates[node_current]-point[axis];
 
   /* Check if the current node is nearer than the previous
      nearest node. */
-  if(!*nearest || d < *least_dist)
+  if(d < *least_dist)
     {
       *least_dist = d;
-      *nearest = current_node;
+      *out_nn = node_current;
     }
 
+  
   /* If exact match found(least distance 0), return it. */
-  if(!*least_dist) return (*nearest)->index;
+  if(*least_dist==0.0f) return;
 
-  current_axis = (current_axis + 1) % dim;
+  printf("\n%s: p->left[node_current] = %u, p->right[node_current]=%u\n",
+         __func__, p->left[node_current], p->right[node_current]);
 
   /* Recursively search in subtrees. */
-  gal_kdtree_nearest_neighbour(dx > 0 ? current_node->left : current_node->right, point,
-			       current_axis, dim, nearest, least_dist,
-			       coordinate, coords);
+  if(dx > 0)
+    {
+      if(p->left[node_current]!=GAL_BLANK_UINT32)
+        kdtree_nearest_neighbour(p, p->left[node_current],
+                                 point, least_dist, out_nn, depth+1);
+    }
+  else
+    {
+      if(p->right[node_current]!=GAL_BLANK_UINT32)
+        kdtree_nearest_neighbour(p, p->right[node_current],
+                                 point, least_dist, out_nn, depth+1);
+    }
 
-  /* Since the hyperplanes are all axis-aligned, for checking
+  /* Since the hyperplanes are all axis-aligned, to check
      if there is a node in other branch that is nearer to the
-     search node,we do a simple comparison to see whether the
+     search node is done by a simple comparison to see whether the
      distance between the splitting coordinate of the search
      point and current node is lesser(i.e on same side of hyperplane)
      than the distance (overall coordinates) from the search point to
      the current nearest. */
-  if(dx_square >= *least_dist) return GAL_BLANK_UINT32;
-  gal_kdtree_nearest_neighbour(dx > 0 ? current_node->right : current_node->left, point,
-			       current_axis, dim, nearest, least_dist,
-			       coordinate, coords);
+  dx2 = dx*dx;
+  if(dx2 >= *least_dist) return;
 
-  return (*nearest)->index;
+  /* Recursively search other subtrees. */
+  if(dx > 0)
+    {
+      if(p->right[node_current]!=GAL_BLANK_UINT32)
+        kdtree_nearest_neighbour(p, p->right[node_current],
+                                 point, least_dist, out_nn, depth+1);
+    }
+  else
+    {
+      if(p->left[node_current]!=GAL_BLANK_UINT32)
+        kdtree_nearest_neighbour(p, p->left[node_current],
+                                 point, least_dist, out_nn, depth+1);
+    }
 }
 
-#endif
+
+
+
+
+/* High-level function used to find the nearest neighbour
+   of from a given point.
+
+   Return : the index of the nearest neighbour in the kd-tree.
+*/
+size_t
+gal_kdtree_nearest_neighbour(gal_data_t *coords_raw, gal_data_t *kdtree,
+                             size_t root, double *point)
+{
+  double least_dist=DBL_MAX;
+  struct kdtree_params p={0};
+  size_t out_nn=GAL_BLANK_SIZE_T;
+
+  /* Initialisation. */
+  p.left_col=kdtree;
+  kdtree_prepare(&p, coords_raw);
+
+  printf("%s: p->left[root]=%u, p->right[root]=%u\n",
+         __func__, p.left[root], p.right[root]);
+
+  /* Use the low-level function to find th nearest neighbour. */
+  kdtree_nearest_neighbour(&p, root, point, &least_dist, &out_nn, 0);
+
+  printf("\n%s: root=%zu, least_dis=%f\n\n", __func__, root, least_dist);
+  /* Clean up and return. */
+  kdtree_cleanup(&p, coords_raw);
+  return out_nn;
+}
+
+
+
+
+
+int main()
+{
+  char *inputname="dummytable.txt";
+  char *outputname="kdtree-out.fits";
+
+  /* Test point for nearest neighbour. */
+  double point[2]={2,0};
+  size_t nearest_index;
+
+  size_t root;
+  gal_data_t *output;
+  /* Read the input table. */
+  gal_data_t *coords=gal_table_read (inputname, "1",
+				     NULL, NULL, GAL_TABLE_SEARCH_NAME,
+				     0, -1, 0, NULL);
+
+  /* Construct a tree. */
+  output=gal_kdtree_create(coords, &root);
+
+  /* Find the nearest neighbour of the point. */
+  nearest_index=gal_kdtree_nearest_neighbour(coords, output, root, point);
+
+  { 
+    double *x=coords->array;
+    double *y=coords->next->array;
+    printf("(%g, %g) nearest_index=%zu->(%g, %g)\n", point[0], point[1],
+            nearest_index, x[nearest_index], y[nearest_index]);
+  }
+
+  /* Write output. */
+  gal_table_write(output, NULL, GAL_TABLE_FORMAT_BFITS,
+                  outputname, "kdtree-info", 0);
+
+  return EXIT_SUCCESS;
+}
