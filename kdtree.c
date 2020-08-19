@@ -18,6 +18,7 @@ struct kdtree_params
   size_t *input_row;
   gal_data_t **coords;
   uint32_t *left, *right;
+  gal_data_t *left_col, *right_col;
 };
 
 
@@ -222,6 +223,90 @@ kdtree_fill_subtrees(struct kdtree_params *p, size_t node_left,
 
 
 
+
+static void
+kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
+{
+  size_t i;
+  gal_data_t *tmp;
+  p->ndim=gal_list_data_number(coords_raw);
+
+  /* Allocate and initialise the kd-tree input_row. */
+  p->input_row=gal_pointer_allocate(GAL_TYPE_SIZE_T, coords_raw->size, 0,
+                                   __func__, "p.input_row");
+  for(i=0; i<coords_raw->size; ++i)	p->input_row[i]=i;
+
+  /* Allocate the coordinate array. */
+  errno=0;
+  p->coords=malloc(p->ndim*sizeof(**(p->coords)));
+  if(p->coords==NULL)
+    error(EXIT_FAILURE, errno, "%s: couldn't allocate %zu bytes "
+	  "for 'coords'", __func__, p->ndim*sizeof(**(p->coords)));
+
+  /* Convert input to double type. */
+  tmp=coords_raw;
+  for(i=0; i<p->ndim; ++i)
+    {
+      if(tmp->type == GAL_TYPE_FLOAT64)
+      	p->coords[i]=tmp;
+      else
+	      p->coords[i]=gal_data_copy_to_new_type (tmp, GAL_TYPE_FLOAT64);
+
+      /* Go to the next column list. */
+      tmp=tmp->next;
+    }
+}
+
+
+
+
+static void
+kdtree_prepare_leftright(struct kdtree_params *p, gal_data_t *coords_raw)
+{
+  size_t i;
+
+  /* Allocate output and initialize them. */
+  p->left_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
+		      coords_raw->minmapsize, coords_raw->quietmmap, "left",
+		      "index", "index of left subtree in the kd-tree");
+  p->right_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
+		       coords_raw->minmapsize, coords_raw->quietmmap, "right",
+		       "index", "index of right subtree in the kd-tree");
+
+  /* Fill the elements of the params structure. */
+  p->left_col->next=p->right_col;
+  p->left=p->left_col->array;
+  p->right=p->right_col->array;
+  for(i=0;i<coords_raw->size;++i)
+    { p->left[i]=p->right[i]=GAL_BLANK_UINT32; }
+}
+
+
+
+
+
+
+static void
+kdtree_cleanup(struct kdtree_params *p, gal_data_t *coords_raw)
+{
+  size_t i;
+  gal_data_t *tmp;
+
+  /* Clean up. */
+  tmp=coords_raw;
+  for(i=0; i<p->ndim; ++i)
+    {
+      if(p->coords[i]!=tmp) gal_data_free(p->coords[i]);
+      tmp=tmp->next;
+    }
+  free(p->coords);
+  free(p->input_row);
+}
+
+
+
+
+
 /* High level function to construct the kd-tree. 
    This function initilises and created the tree
    in top-down manner. 
@@ -235,48 +320,10 @@ gal_kdtree_create(gal_data_t *coords_raw)
 {
   size_t i;
   struct kdtree_params p;
-  gal_data_t *left, *right, *tmp;
 
-  /* Allocate output and initialize them. */
-  left=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-		      coords_raw->minmapsize, coords_raw->quietmmap, "left",
-		      "index", "index of left subtree in the kd-tree");
-  right=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-		       coords_raw->minmapsize, coords_raw->quietmmap, "right",
-		       "index", "index of right subtree in the kd-tree");
-
-  /* Fill the elements of the params structure. */
-  left->next=right;
-  p.left=left->array;
-  p.right=right->array;
-  p.ndim=gal_list_data_number(coords_raw);
-  for(i=0;i<coords_raw->size;++i)
-    { p.left[i]=p.right[i]=GAL_BLANK_UINT32; }
-
-  /* Allocate and initialise the kd-tree input_row. */
-  p.input_row=gal_pointer_allocate(GAL_TYPE_SIZE_T, coords_raw->size, 0,
-                                   __func__, "p.input_row");
-  for(i=0; i<coords_raw->size; ++i)	p.input_row[i]=i;
-
-  /* Allocate the coordinate array. */
-  errno=0;
-  p.coords=malloc(p.ndim*sizeof(**(p.coords)));
-  if(p.coords==NULL)
-    error(EXIT_FAILURE, errno, "%s: couldn't allocate %zu bytes "
-	  "for 'coords'", __func__, p.ndim*sizeof(**(p.coords)));
-
-  /* Convert input to double type. */
-  tmp=coords_raw;
-  for(i=0; i<p.ndim; ++i)
-    {
-      if(tmp->type == GAL_TYPE_FLOAT64)
-      	p.coords[i]=tmp;
-      else
-	p.coords[i]=gal_data_copy_to_new_type (tmp, GAL_TYPE_FLOAT64);
-
-      /* Go to the next column list. */
-      tmp=tmp->next;
-    }
+  /* Initialise the params structure. */
+  kdtree_prepare(&p, coords_raw);
+  kdtree_prepare_leftright(&p, coords_raw);
 
   /* Fill the kd-tree*/
   kdtree_fill_subtrees(&p, 0, coords_raw->size-1, 0);
@@ -286,21 +333,14 @@ gal_kdtree_create(gal_data_t *coords_raw)
     printf("%-15zu%-15u%-15u\n", p.input_row[i], p.left[i], p.right[i]);
 
   /* Do a reverse permutation to sort the indexes back in the input order. */
-  gal_permutation_apply_inverse (left, p.input_row);
-  gal_permutation_apply_inverse (right, p.input_row);
+  gal_permutation_apply_inverse (p.left_col, p.input_row);
+  gal_permutation_apply_inverse (p.right_col, p.input_row);
 
-  /* Clean up. */
-  tmp=coords_raw;
-  for(i=0; i<p.ndim; ++i)
-    {
-      if(p.coords[i]!=tmp) gal_data_free(p.coords[i]);
-      tmp=tmp->next;
-    }
-  free(p.coords);
-  free(p.input_row);
+  /* Free and clean up */
+  kdtree_cleanup(&p, coords_raw);
 
   /* Return results. */
-  return left;
+  return p.left_col;
 }
 
 
@@ -321,6 +361,13 @@ int main()
   /* Construct a tree. */
   output=gal_kdtree_create(coords);
 
+  /* DEBUGGING
+  uint32_t *temp=output->array;
+  uint32_t *ntemp=output->next->array;
+  for(int i=0;i<output->size; ++i)
+  printf("```%u %u\n", temp[i], ntemp[i]);
+  */
+
   /* Write output. */
   gal_table_write(output, NULL, GAL_TABLE_FORMAT_BFITS,
                   outputname, "kdtree-info", 0);
@@ -331,6 +378,7 @@ int main()
 
 
 
+#if 0
 
 /* Return the distance between 2 given nodes.
    This distance is equivalent to the radius of
@@ -363,12 +411,19 @@ kdtree_distance_find(struct kdtree_params *p, size_t node1,
 
 
 
-/* Return a array of indexes of the k-nearest neighbours. */
+
+
+
+/* Return a array of indexes of the k-nearest neighbours. 
+   Use a max-heap to store the k nearest neighbours.
+   
+*/
 size_t *
-gal_kdtree_nearest_neighbour(struct params *p, gal_data_t **coords,
+gal_kdtree_nearest_neighbour(gal_data_t *coords_raw, uint32_t node_current,
                              gal_data_t *kdtree, double *point, size_t k)
 {
-  
+  /* */
+
 }
 
 
@@ -376,7 +431,6 @@ gal_kdtree_nearest_neighbour(struct params *p, gal_data_t **coords,
 
 
 
-#if 0
 
 /* Find the distance between 2 nodes of the tree.
 
