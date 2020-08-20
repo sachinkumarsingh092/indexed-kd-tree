@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <error.h>
+#include <stdbool.h>
+
+#include "kdtree.c"
 
 #include <gnuastro/qsort.h>
 #include <gnuastro/table.h>
@@ -76,14 +79,14 @@ struct quad_vertex
 
 /***************Visualization*****************/
 
-/* Make a ds9 complatiable polygon region file for easy visualizations. 
+/* Make a ds9 complatiable polygon region file for easy visualizations.
 
    Arguments
    =========
    char *filename      - The filename of the region file.
    size_t num_polygons - Total number of polygons.
-   double *polygon     - The array containg the points of the polygon. 
-   size_t num_vertices - Number of vertices of each polygon. 
+   double *polygon     - The array containg the points of the polygon.
+   size_t num_vertices - Number of vertices of each polygon.
    char *color         - The color of the polygons in DS9.
 
    Return
@@ -323,7 +326,7 @@ find_brightest_stars(gal_data_t *ra, gal_data_t *dec, gal_data_t *magnitude,
 
 /**************making hashes************************/
 
-/* Return the angle in range [0, 360) degrees between 
+/* Return the angle in range [0, 360) degrees between
    points A, O and B where O is the vertex of angle AOB. */
 double
 find_angle_aob(double ax, double ay, double ox, double oy, double bx, double by)
@@ -352,7 +355,7 @@ find_angle_aob(double ax, double ay, double ox, double oy, double bx, double by)
    Finally return a array of size 4 cotaining the code - {Cx, Cy, Dx, Dy}.
    Also, after this the quads will be sorted by brightness, so this
    further removes redundencies. */
-void 
+void
 hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct params *p)
 {
   size_t i;
@@ -363,7 +366,7 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
   double *dx=p->dx->array, *dy=p->dy->array;
   uint32_t *c_ind=p->c_ind->array;
   uint32_t *d_ind=p->d_ind->array;
-  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
+  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array;
   double ref_ra, ref_dec;
 
   /* Fill the ra and dec arrays. Here indexes of a, b, c, d
@@ -373,17 +376,17 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
       ra[i]=ra_arr[sorted_vertices[i].index];
       dec[i]=dec_arr[sorted_vertices[i].index];
     }
-  
+
   /* Firstly we find a point on the x-axis of the local coordinate
-     system and use it as a reference(point R) so that we can find angles 
+     system and use it as a reference(point R) so that we can find angles
      between CAR and DAR. We assume AB to be angle bisector of the local
      coordinate system.
 
-     Point R will be the component of AB in x-axis. 
+     Point R will be the component of AB in x-axis.
      Therefore point R = (|AB|cos45, 0). */
   mag_ab=sqrt((ra[0]-ra[1])*(ra[0]-ra[1])
                +(dec[0]-dec[1])*(dec[0]-dec[1]));
-  
+
   /* Make a scaled-down value for the new coordinate system. We want that
                 |AB|=1, and hence scale = 1/|AB|
      where |AB|=sqrt(|AB.ra|^2+|AB.dec|^2).
@@ -394,7 +397,7 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
   // printf("scale = %g\n", scale);
 
   ref_ra =scale*mag_ab*cos(45);
-  ref_dec=0;  
+  ref_dec=0;
 
   /* Find angles CAR and DAR. */
   angle_car=find_angle_aob(ra[2], dec[2], ra[0], dec[0], ref_ra, ref_dec);
@@ -421,7 +424,7 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
   dx[qindex]=mag_ad*scale*cos(angle_dar); /* Dx */
   dy[qindex]=mag_ad*scale*sin(angle_dar); /* Dy */
 
-  /* If the positions of star dont follow the given conditions, 
+  /* If the positions of star dont follow the given conditions,
    swap them. */
   if(cx[qindex] > dx[qindex] || cx[qindex]+dx[qindex]>1)
     {
@@ -438,7 +441,7 @@ hash_geometric_fix_cd(size_t qindex, struct quad_vertex* sorted_vertices, struct
 
 
 /* Find the relative brightness of the stars in the quad
-   and make a unique number to represtent the relative 
+   and make a unique number to represtent the relative
    brightness of the quad to make it further unique
    while detection. */
 void
@@ -450,7 +453,7 @@ hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct param
   size_t rel_magnitude_index[4];  /* a, b, c, d values. */
   float *mag_arr=p->magnitude->array;
   /* Initialise to the nearest power of 2 such that all previous multiple of 4 bits are 0.*/
-  uint16_t a_bit=1, b_bit=16, c_bit=256, d_bit=4096; 
+  uint16_t a_bit=1, b_bit=16, c_bit=256, d_bit=4096;
   uint16_t *rel_brightness=p->rel_brightness->array;
 
   /* Make an array for the values of the magnitude. */
@@ -463,9 +466,9 @@ hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct param
       if(magnitude[i] < magnitude[j])
         {
           /* Swap these values. */
-          tmp = magnitude[i];         
-				  magnitude[i] = magnitude[j];            
-				  magnitude[j] = tmp;             
+          tmp = magnitude[i];
+				  magnitude[i] = magnitude[j];
+				  magnitude[j] = tmp;
         }
 
   /* Assign values indexes for relative magnitudes. */
@@ -477,7 +480,7 @@ hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct param
           break;
         }
 
-  /* For eg, star A is the a-th star and is either of {0, 1, 2, 3} 
+  /* For eg, star A is the a-th star and is either of {0, 1, 2, 3}
      0 being the lowest value and 3 being the highest value. */
 
   /* Shift the bits wrt the relative brightness in the quad. */
@@ -488,10 +491,10 @@ hash_brightness(size_t qindex, struct quad_vertex* sorted_vertices, struct param
 
   /* After we have 4 16-bits numbers representing the relative
      brigtness of each star, we do a bitiwise-or to join them
-     together to give a unique 16-bit number to the quad. 
+     together to give a unique 16-bit number to the quad.
      For eg, if a=3, b=2, c=1, d=0 then the exected output in
      binary system is:
-     1 0 0 0   0 1 0 0   0 0 1 0   0 0 0 1  
+     1 0 0 0   0 1 0 0   0 0 1 0   0 0 0 1
      which is 8737 in decimal system. */
   rel_brightness[qindex] = (a_bit | b_bit | c_bit | d_bit);
 
@@ -523,7 +526,7 @@ sort_by_distance(const void *a, const void *b)
 
 
 
-/* Find indexes of stars A, B, C, D in the given quads. 
+/* Find indexes of stars A, B, C, D in the given quads.
 
    After finding the stars w.r.t a given star, we need to
    find the pair that is the most distant and assign them
@@ -531,7 +534,7 @@ sort_by_distance(const void *a, const void *b)
    C, D and to firmly ensure the position of A and B, we ensure
    that the following conditions hold true:
                      Cx<=Dx         (1)
-                     Cx+Dx<=1       (2) 
+                     Cx+Dx<=1       (2)
    The first condition assigns the correct star for C and D
    while the second condition assigns correct stars for  A and B.
 */
@@ -547,7 +550,7 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   uint32_t *b_ind=p->b_ind->array;
   uint32_t *c_ind=p->c_ind->array;
   uint32_t *d_ind=p->d_ind->array;
-  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array; 
+  double ra[4], dec[4], *ra_arr=p->ra->array, *dec_arr=p->dec->array;
 
   /* Fill the ra and dec arrays. */
   for(i=0;i<4;++i)
@@ -560,7 +563,7 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   for(i=0;i<4;++i)
     for(j=0;j<4;++j)
       {
-        /* Use a set to remove repeated pairs like {AB, BA} etc. 
+        /* Use a set to remove repeated pairs like {AB, BA} etc.
            Further remove cases where the same stars are used like AA etc.
            */
         if(!perm_set[i][j] && i!=j)
@@ -582,7 +585,7 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
                 /* Make the current distance equal to current maximum */
                 current_max_dis=distance;
 
-                /* Assign the indexes of A and B. 
+                /* Assign the indexes of A and B.
                    Note that due to sorted nature of the input
                    `struct quad_vertex` and due to the above conditions,
                    i < j and hence the index of A will always be greater
@@ -595,20 +598,20 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
 
 
   /* Now we have the indexes of star A and B. The remaining vertices are
-      randomly assigned as C and D. We will correctly determine the 
-      star C and D after this. */ 
+      randomly assigned as C and D. We will correctly determine the
+      star C and D after this. */
   for(i=0;i<4;++i)
     /* If the remaining index is none of those assigned to A or B,
         assign them to C and D. */
-    if( sorted_vertices[i].index != a_ind[qindex] && 
+    if( sorted_vertices[i].index != a_ind[qindex] &&
         sorted_vertices[i].index != b_ind[qindex] )
       {
-        if(!c_assigned) 
+        if(!c_assigned)
           {
             c_ind[qindex]=sorted_vertices[i].index;
             c_assigned=1;
           }
-        else           
+        else
           d_ind[qindex]=sorted_vertices[i].index;
       }
 
@@ -621,8 +624,8 @@ hash_build_write(size_t qindex, struct quad_vertex* sorted_vertices, struct para
   temp_vertices[3].index=d_ind[qindex];
 
   /* For a check
-  printf("A = (%g, %g) B = (%g, %g) C = (%g, %g) D = (%g, %g)\n", 
-         ra_arr[a_ind[qindex]], dec_arr[a_ind[qindex]], ra_arr[b_ind[qindex]], dec_arr[b_ind[qindex]], 
+  printf("A = (%g, %g) B = (%g, %g) C = (%g, %g) D = (%g, %g)\n",
+         ra_arr[a_ind[qindex]], dec_arr[a_ind[qindex]], ra_arr[b_ind[qindex]], dec_arr[b_ind[qindex]],
          ra_arr[c_ind[qindex]], dec_arr[c_ind[qindex]], ra_arr[d_ind[qindex]], dec_arr[d_ind[qindex]] );
   */
 
@@ -692,7 +695,7 @@ make_quads_worker(void *in_prm)
       good_stars=NULL;
       for(j=0;j<p->magnitude->size;++j)
         if (     ra[j]  <= ref_ra+max_dist
-              && ra[j]  >= ref_ra-max_dist 
+              && ra[j]  >= ref_ra-max_dist
               && dec[j] <= ref_dec+max_dist
               && dec[j] >= ref_dec-max_dist )
             gal_list_sizet_add(&good_stars, j);
@@ -704,7 +707,7 @@ make_quads_worker(void *in_prm)
         {
           cx[qindex]=cy[qindex]=dx[qindex]=dy[qindex]=NAN;
           rel_brightness[qindex]=GAL_BLANK_UINT16;
-          a_ind[qindex]=b_ind[qindex]=c_ind[qindex]=d_ind[qindex]=GAL_BLANK_SIZE_T;
+          a_ind[qindex]=b_ind[qindex]=c_ind[qindex]=d_ind[qindex]=GAL_BLANK_UINT32;
           continue;
         }
 
@@ -712,8 +715,8 @@ make_quads_worker(void *in_prm)
       errno=0;
       qvertices=malloc(nstars*sizeof(*qvertices));
       if(!qvertices)
-        error(EXIT_FAILURE, errno, "%s: failed to allocate %zu " 
-              " bytes for 'qvertices'.", __func__, 
+        error(EXIT_FAILURE, errno, "%s: failed to allocate %zu "
+              " bytes for 'qvertices'.", __func__,
               nstars*sizeof(*qvertices));
 
       /* Loop over the list extract inforamation for sorting. */
@@ -723,7 +726,7 @@ make_quads_worker(void *in_prm)
           /* Assign the value of tstars as Star Id. */
           sid=tstar->v;
 
-          /* Store the relevant details for the possible quad member star. 
+          /* Store the relevant details for the possible quad member star.
              We find distances from current star to later sort the stars
              on basis of diatance and form qvertices based on the distance.
              As only the magnitude of distance is required and not the
@@ -749,11 +752,11 @@ make_quads_worker(void *in_prm)
          3 -> 25, 80
          4 -> 35, 90
 
-         So find distance between all the stars in the quad wrt each other 
-         and select the 2 stars that are most distant as A or B. 
+         So find distance between all the stars in the quad wrt each other
+         and select the 2 stars that are most distant as A or B.
          In the above ex the most distant star are 1 and 4. After we define star
          A to be the one which is more nearer to star C and D(or the other 2 stars)
-         i.e if dis(1, 2) < dis(1, 3) 
+         i.e if dis(1, 2) < dis(1, 3)
 
       */
 
@@ -779,7 +782,7 @@ make_quads_worker(void *in_prm)
             good_vertices[2] = qvertices[nstars*3/4];  /* D */
             good_vertices[3] = qvertices[nstars-1];    /* B */
         }
-      
+
       /* For a test:
       printf("good_vertices = (%g, %g) (%g, %g) (%g, %g) (%g, %g)\n",
              good_vertices[0].ra, good_vertices[0].dec,
@@ -870,10 +873,10 @@ quad_allocate_output(struct params *p, size_t num_quads)
 
   p->left=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                       minmapsize, quitemmap, "KD-left-index", "counter",
-												 "index of left subtree");  
+												 "index of left subtree");
   p->right=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
 	                       minmapsize, quitemmap, "KD-right-index", "counter",
-												 "index of right subtree");  
+												 "index of right subtree");
 
   /* Define them as a list for the final output. */
   p->cx->next=p->cy;
@@ -897,17 +900,23 @@ int main()
   /* Input arguments. */
 	size_t x_numbin=5, y_numbin=5, num_stars_per_gpixel=5;
   size_t num_threads=1;
-  char *kd_tree_outname="kd-tree-output.fits";
-  char *quad_outname="quad-out.fits";
 
+  char *query_inname="gaia-in-img.fits";
+  char *query_outname="query-out.fits";
+
+  char *index_inname="gaia-dr2-near-castor.fits";
+  char *index_outname="index-out.fits";
+
+  char *index_kdtree_outname="index-kdtree-out.fits";
 
   /* Internal. */
   struct params p;
-	// size_t i,j, index;
 	struct grid in_grid={0};
   // size_t num_gpix=x_numbin*y_numbin;
 	size_t num_quads=x_numbin*y_numbin*num_stars_per_gpixel;
 
+
+  /**************Quad-hashes creation*************/
 	/* Choose columns to read. */
   gal_list_str_t *cols=NULL;
   gal_list_str_add(&cols, "ra", 0);
@@ -916,7 +925,7 @@ int main()
   gal_list_str_reverse(&cols);
 
   /* Read the columns. */
-  gal_data_t *ref=gal_table_read ("gaia-in-img.fits", "1",
+  gal_data_t *ref=gal_table_read (query_inname, "1",
                                   NULL, cols, GAL_TABLE_SEARCH_NAME,
                                   0, -1, 0, NULL);
 
@@ -929,10 +938,10 @@ int main()
 	grid_make(p.ra, p.dec, x_numbin, y_numbin, &in_grid);
 
 	/* Find the top 5 star ids using structure. */
-  p.brightest_star_id=find_brightest_stars(p.ra, p.dec, p.magnitude, num_quads, &in_grid, 
+  p.brightest_star_id=find_brightest_stars(p.ra, p.dec, p.magnitude, num_quads, &in_grid,
                                           num_stars_per_gpixel);
 
-  /* Allocate output columns. */ 
+  /* Allocate output columns. */
   quad_allocate_output(&p, num_quads);
 
   /* Finally config p and spin-off the threads. */
@@ -941,40 +950,78 @@ int main()
   gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
 
   /* Write the quad calculation into a file. */
-  p.rel_brightness->next=NULL;
+  p.dy->next=NULL;
   gal_table_write(p.cx, NULL, GAL_TABLE_FORMAT_BFITS,
-                  quad_outname, "quad-info", 0);
+                  query_outname, "quad-info", 0);
 
 
-  /* Calculate kd-tree. 
-     struct kd_node
-     {
-       size_t coord_index; //index of this node in the input coordinate table
-       struct kd_node *left, *right;
-     }
+  /**********Tree creation**************/
 
-     void
-     kdtree_make(gal_data_t *coordinates, size_t ndim)
-     {
-       // Read 'quad-info.fits' into memory.(like ref)
+  /* Calculate kd-tree. */
+  size_t root;
+  gal_data_t *output;
 
-       // Create a kd_node for every row of ref table.
-
-       // Continue with old-implementation(instead of 4 values, use index to read from the input table.)
-     }
-
-     cx cy dx  dy           index
-     1   1  1  1              0
-     1   1  1  1              1
-     1   1  1  1              2   
-  */
+  /* Read the input table. */
+  gal_data_t *coords=gal_table_read (index_outname, "1",
+            NULL, NULL, GAL_TABLE_SEARCH_NAME,
+            0, -1, 0, NULL);
+  
+  /* Construct a tree. */
+  output=gal_kdtree_create(coords, &root);
 
 
-  /* Write all information to a file. */
-  // p.dy->next=p.rel_brightness;
-  // gal_table_write(p.cx, NULL, GAL_TABLE_FORMAT_BFITS,
-  //                 kd_tree_outname, "kd-tree.fits", 0);
+  /* Write output to a file. */
+  gal_table_write(output, NULL, GAL_TABLE_FORMAT_BFITS,
+                  index_kdtree_outname, "kdtree-info", 0);
+
+
+  /****************Nearest Neighbour Finding****************/
+  {
+    gal_data_t *cx, *cy, *dx, *dy;
+    gal_list_str_t *query_cols=NULL;
+    gal_list_str_add(&query_cols, "Cx", 0);
+    gal_list_str_add(&query_cols, "Cy", 0);
+    gal_list_str_add(&query_cols, "Dx", 0);
+    gal_list_str_add(&query_cols, "Dy", 0);
+    gal_list_str_reverse(&query_cols);
+
+     /* Read the columns. */
+    gal_data_t *query_table=gal_table_read (query_outname, "1",
+                                    NULL, query_cols, GAL_TABLE_SEARCH_NAME,
+                                    0, -1, 0, NULL);
+
+    /* Seperate columns. */
+    cx=gal_data_copy_to_new_type (query_table, GAL_TYPE_FLOAT64);
+    cy=gal_data_copy_to_new_type (query_table->next, GAL_TYPE_FLOAT64);
+    dx=gal_data_copy_to_new_type (query_table->next->next, GAL_TYPE_FLOAT64);
+    dy=gal_data_copy_to_new_type (query_table->next->next->next, GAL_TYPE_FLOAT64);
+
+    double *cx_val=cx->array;
+    double *cy_val=cy->array;
+    double *dx_val=dx->array;
+    double *dy_val=dy->array;
+
+    size_t nearest_index;
+
+    /* Find the nearest neighbour of the point. */
+    for(size_t i=0;i<query_table->size; ++i)
+    {
+      double point[4]={cx_val[i], cy_val[i], dx_val[i], dy_val[i]};
+      nearest_index=gal_kdtree_nearest_neighbour(coords, output, root, point);
+
+      /* For a check */
+      double *a=coords->array;
+      double *b=coords->next->array;
+      double *c=coords->next->next->array;
+      double *d=coords->next->next->next->array;
+      printf("i=%zu:(%g, %g, %g, %g) nearest_index=%zu->(%g, %g, %g, %g)\n\n",
+             i, point[0], point[1], point[2], point[3],
+             nearest_index, a[nearest_index], b[nearest_index], c[nearest_index], d[nearest_index]);
+    }
+  }
 
   /* Clean up. */
 	gal_list_data_free (ref);
+
+  return EXIT_SUCCESS;
 }

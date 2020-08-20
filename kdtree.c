@@ -435,26 +435,21 @@ kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
       *out_nn = node_current;
     }
 
+  // printf("%s: d= %f, least_dis=%f\n", __func__, d, *least_dist);
   
   /* If exact match found(least distance 0), return it. */
   if(*least_dist==0.0f) return;
 
-  printf("\n%s: p->left[node_current] = %u, p->right[node_current]=%u\n",
-         __func__, p->left[node_current], p->right[node_current]);
+  // printf("\n%s: p->left[node_current] = %u, p->right[node_current]=%u\n",
+  //        __func__, p->left[node_current], p->right[node_current]);
 
   /* Recursively search in subtrees. */
-  if(dx > 0)
-    {
-      if(p->left[node_current]!=GAL_BLANK_UINT32)
-        kdtree_nearest_neighbour(p, p->left[node_current],
-                                 point, least_dist, out_nn, depth+1);
-    }
-  else
-    {
-      if(p->right[node_current]!=GAL_BLANK_UINT32)
-        kdtree_nearest_neighbour(p, p->right[node_current],
-                                 point, least_dist, out_nn, depth+1);
-    }
+  kdtree_nearest_neighbour(p, dx > 0 
+                              ? p->left[node_current]
+                              : p->right[node_current],
+                           point, least_dist, out_nn, depth+1);
+    
+ 
 
   /* Since the hyperplanes are all axis-aligned, to check
      if there is a node in other branch that is nearer to the
@@ -467,18 +462,10 @@ kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
   if(dx2 >= *least_dist) return;
 
   /* Recursively search other subtrees. */
-  if(dx > 0)
-    {
-      if(p->right[node_current]!=GAL_BLANK_UINT32)
-        kdtree_nearest_neighbour(p, p->right[node_current],
-                                 point, least_dist, out_nn, depth+1);
-    }
-  else
-    {
-      if(p->left[node_current]!=GAL_BLANK_UINT32)
-        kdtree_nearest_neighbour(p, p->left[node_current],
-                                 point, least_dist, out_nn, depth+1);
-    }
+  kdtree_nearest_neighbour(p, dx > 0 
+                              ? p->right[node_current]
+                              : p->left[node_current],
+                           point, least_dist, out_nn, depth+1);
 }
 
 
@@ -502,13 +489,14 @@ gal_kdtree_nearest_neighbour(gal_data_t *coords_raw, gal_data_t *kdtree,
   p.left_col=kdtree;
   kdtree_prepare(&p, coords_raw);
 
-  printf("%s: p->left[root]=%u, p->right[root]=%u\n",
-         __func__, p.left[root], p.right[root]);
+  // printf("%s: p->left[root]=%u, p->right[root]=%u\n",
+  //        __func__, p.left[root], p.right[root]);
 
   /* Use the low-level function to find th nearest neighbour. */
   kdtree_nearest_neighbour(&p, root, point, &least_dist, &out_nn, 0);
 
-  printf("\n%s: root=%zu, least_dis=%f\n\n", __func__, root, least_dist);
+  printf("%s: root=%zu, out_nn=%zu, least_dis=%f\n", 
+         __func__, root, out_nn, least_dist);
   /* Clean up and return. */
   kdtree_cleanup(&p, coords_raw);
   return out_nn;
@@ -516,7 +504,7 @@ gal_kdtree_nearest_neighbour(gal_data_t *coords_raw, gal_data_t *kdtree,
 
 
 
-
+#if 0
 
 int main()
 {
@@ -524,7 +512,7 @@ int main()
   char *outputname="kdtree-out.fits";
 
   /* Test point for nearest neighbour. */
-  double point[2]={2,0};
+  double point[2]={9,8};
   size_t nearest_index;
 
   size_t root;
@@ -553,3 +541,5 @@ int main()
 
   return EXIT_SUCCESS;
 }
+
+#endif
