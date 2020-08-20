@@ -15,10 +15,7 @@ REGION :=
 
 
 compile: ${PROGNAME}.c
-	if [[ -a kdtree-out.fits ]];  \
-	then							\
-	    rm kdtree-out.fits quad-out.fits;		\
-	fi;								\
+	rm -f ./build/*;		\
 	${CC} ${CFLAGS} $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
 
 ds9:
