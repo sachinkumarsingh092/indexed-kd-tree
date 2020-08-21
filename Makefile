@@ -15,7 +15,7 @@ REGION :=
 
 compile: ${PROGNAME}.c
 	rm -f ./build/*;		\
-	${CC} ${CFLAGS} $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
+	${CC} ${CFLAGS} -g -O0 $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
 
 ds9:
 	ds9 test-pv.fits -zscale -zoom to fit -regions ${REGION}.reg
