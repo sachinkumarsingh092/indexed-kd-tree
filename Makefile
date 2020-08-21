@@ -4,14 +4,13 @@ CC := gcc
 CC := ${CC}
 CFLAGS := -Wall -O3 -g
 INCLUDES := -I/usr/local/include
-LIBS := /usr/local/lib/libgnuastro.a /usr/local/lib/libchealpix.so \
-		-lgit2 -ltiff -llzma -ljpeg -L/usr/local/lib -lwcs -lcfitsio \
-		/usr/lib/x86_64-linux-gnu/libcurl-gnutls.so -lz \
-		/usr/local/lib/libgsl.so /usr/local/lib/libgslcblas.so -lm -lc -lpthread -pthread
+LIBS := /usr/local/lib/libgnuastro.a\
+	-lgit2 -ltiff -llzma -ljpeg -L/usr/local/lib -lwcs -lcfitsio -lz \
+	/usr/local/lib/libgsl.so /usr/local/lib/libgslcblas.so -lm -lc -lpthread -pthread
 
-PROGNAME := 
+PROGNAME := match
 SHELL := /usr/bin/env bash
-REGION := 
+REGION :=
 
 
 compile: ${PROGNAME}.c
