@@ -76,8 +76,8 @@ struct matched_points
 struct params
 {
   /* Inputs. */
-  gal_data_t *x,     *y;
-  gal_data_t *ra,    *dec;
+  gal_data_t *x, *y;
+  gal_data_t *ra, *dec;
   gal_data_t *r_mag, *q_mag;
   float max_mag_diff;
   char *ds9regprefix;
@@ -87,6 +87,7 @@ struct params
   double max_star_dis_in_quad;
 
   /* Reference table quad information. */
+  size_t kdtree_root;
   gal_data_t *cx, *cy;
   gal_data_t *dx, *dy;
   gal_data_t *left, *right;
@@ -274,41 +275,41 @@ match_quad_as_ds9_reg(FILE *regfile, double *c1, double *c2, size_t qindex,
 
 /* Make a grid of boxes on the given list of coordinates. */
 static void
-grid_make(gal_data_t *x, gal_data_t *y, size_t x_numbins,
-          size_t y_numbins, struct grid *grid)
+grid_make(gal_data_t *c1, gal_data_t *c2, size_t c1_numbins,
+          size_t c2_numbins, struct grid *grid)
 {
-  double xmin, xmax, ymin, ymax;
-  gal_data_t *x_min=NULL, *x_max=NULL, *y_min=NULL, *y_max=NULL;
+  double c1min, c1max, c2min, c2max;
+  gal_data_t *c1_min=NULL, *c1_max=NULL, *c2_min=NULL, *c2_max=NULL;
 
   /* Assign the dimensions of the grid. */
-  grid->dim[0]=x_numbins;
-  grid->dim[1]=y_numbins;
+  grid->dim[0]=c1_numbins;
+  grid->dim[1]=c2_numbins;
 
   /* The size of the grid(=dim1xdim2). */
   grid->size=grid->dim[0]*grid->dim[1];
 
   /* Extract the range of values. */
-  x_min=gal_statistics_minimum(x);
-  x_max=gal_statistics_maximum(x);
-  y_min=gal_statistics_minimum(y);
-  y_max=gal_statistics_maximum(y);
-  xmin=((double *)(x_min->array))[0];
-  xmax=((double *)(x_max->array))[0];
-  ymin=((double *)(y_min->array))[0];
-  ymax=((double *)(y_max->array))[0];
+  c1_min=gal_statistics_minimum(c1);
+  c1_max=gal_statistics_maximum(c1);
+  c2_min=gal_statistics_minimum(c2);
+  c2_max=gal_statistics_maximum(c2);
+  c1min=((double *)(c1_min->array))[0];
+  c1max=((double *)(c1_max->array))[0];
+  c2min=((double *)(c2_min->array))[0];
+  c2max=((double *)(c2_max->array))[0];
 
   /* Assign the minimum RA value and the size of steps=(max-min/no of grid)
      to reach the last grid from the first step. */
-  grid->min[0]=xmin;
-  grid->min[1]=ymin;
-  grid->step_size[0]=(xmax-xmin)/x_numbins;
-  grid->step_size[1]=(ymax-ymin)/y_numbins;
+  grid->min[0]=c1min;
+  grid->min[1]=c2min;
+  grid->step_size[0]=(c1max-c1min)/c1_numbins;
+  grid->step_size[1]=(c2max-c2min)/c2_numbins;
 
   /* Clean up. */
-  gal_data_free(x_min);
-  gal_data_free(x_max);
-  gal_data_free(y_max);
-  gal_data_free(y_min);
+  gal_data_free(c1_min);
+  gal_data_free(c1_max);
+  gal_data_free(c2_max);
+  gal_data_free(c2_min);
 }
 
 
@@ -358,8 +359,8 @@ grid_findindex(double X, double Y, struct grid *grid)
 /*********        Selecting brightest stars        *********/
 /***********************************************************/
 
-/* Returns a 2x2 array with first index having the index of the box in
-   the grid and the second index having the IDs of the stars. */
+/* Select the brightest stars in each grid element. These will be used
+   as a starting point for constructing quads. */
 static size_t *
 find_brightest_stars(gal_data_t *x_data, gal_data_t *y_data,
                      gal_data_t *mag_data, size_t num_quads,
@@ -893,6 +894,62 @@ quad_from_point(struct params *p, size_t qindex,
 
 
 
+/* A quad has been found over the query catalog, we now want to match
+   it with the reference quads and keep the indexs. */
+void
+match_quad_to_ref(struct params *p, struct matched_points *matched,
+		  size_t *abcd, double *geohash, uint16_t rel_b)
+{
+  size_t qindex;
+  double least_dist;
+
+  /* For easy reading. */
+  double *x=p->x->array;
+  double *y=p->y->array;
+  double *ra=p->ra->array;
+  double *cx=p->cx->array;
+  double *cy=p->cy->array;
+  double *dx=p->dx->array;
+  double *dy=p->dy->array;
+  double *dec=p->dec->array;
+  uint32_t *a_ind=p->a_ind->array;
+  uint32_t *b_ind=p->b_ind->array;
+  uint32_t *c_ind=p->c_ind->array;
+  uint32_t *d_ind=p->d_ind->array;
+  uint16_t *rel_brightness=p->rel_brightness->array;
+
+  /* Find the matching quad from the reference catalog. */
+  qindex=gal_kdtree_nearest_neighbour(p->cx, p->left, p->kdtree_root,
+				       geohash, &least_dist);
+
+  /* For a check: */
+  printf("refquad: %zu (dist: %g)\n", qindex, least_dist);
+  printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
+  printf("------------------------------------------------\n");
+  printf("%-10s%-30u%u\n", "rel_b", rel_brightness[qindex], rel_b);
+  printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Cx,Cy", cx[qindex], cy[qindex],
+	 geohash[0], geohash[1]);
+  printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Dx,Dy", dx[qindex], dy[qindex],
+	 geohash[1], geohash[2]);
+  printf("\n");
+  printf("%-10s%-10g%-20g%-10g%g\n", "A", ra[a_ind[qindex]], dec[a_ind[qindex]],
+	 x[abcd[0]], y[abcd[0]]);
+  printf("%-10s%-10g%-20g%-10g%g\n", "B", ra[b_ind[qindex]], dec[b_ind[qindex]],
+	 x[abcd[1]], y[abcd[1]]);
+  printf("%-10s%-10g%-20g%-10g%g\n", "C", ra[c_ind[qindex]], dec[c_ind[qindex]],
+	 x[abcd[2]], y[abcd[2]]);
+  printf("%-10s%-10g%-20g%-10g%g\n", "D", ra[d_ind[qindex]], dec[d_ind[qindex]],
+	 x[abcd[3]], y[abcd[3]]);
+
+
+  printf("\n...%s...\n", __func__);
+  exit(0);
+}
+
+
+
+
+
 
 
 
@@ -907,6 +964,7 @@ make_quads_worker(void *in_prm)
   struct params *p=(struct params *)tprm->params;
 
   /* Subsequent definitions. */
+  uint16_t rel_b;
   size_t abcd[4];
   size_t i, qindex;
   double geohash[4];
@@ -922,6 +980,7 @@ make_quads_worker(void *in_prm)
   uint16_t *rel_brightness=p->rel_brightness->array;
   uint32_t *a_ind=p->a_ind->array, *b_ind=p->b_ind->array;
   uint32_t *c_ind=p->c_ind->array, *d_ind=p->d_ind->array;
+  struct matched_points *matched= p->matched ? p->matched[tprm->id] : NULL;
 
   /* Visualize the quads as a ds9 region file on an image with an
      existing WCS. If you want the check, simply set 'makereg' to a
@@ -937,14 +996,22 @@ make_quads_worker(void *in_prm)
       /* Extract this quad's index in the final table. */
       qindex=tprm->indexs[i];
 
-      /* Based on this bright star, build a quad. */
+      /**************FOR TESTS*******************/
+      if(p->c1==p->ra) qindex=1;
+      /******************************************/
+
+      /* Based on this bright star, build a quad. If there aren't
+	 enough vertices to build a quad, just ignore this entry. */
       quadfound=quad_from_point(p, qindex, good_vertices);
       if(quadfound==0)
 	{
-	  a_ind[qindex]=GAL_BLANK_UINT32;
-	  rel_brightness[qindex]=GAL_BLANK_UINT16;
-	  cx[qindex]=cy[qindex]=dx[qindex]=dy[qindex]=NAN;
-	  b_ind[qindex]=c_ind[qindex]=d_ind[qindex]=GAL_BLANK_UINT32;
+	  if(p->c1==p->ra)	/* In the reference catalog, we need to */
+	    {			/* set the elements to blank. */
+	      a_ind[qindex]=GAL_BLANK_UINT32;
+	      rel_brightness[qindex]=GAL_BLANK_UINT16;
+	      cx[qindex]=cy[qindex]=dx[qindex]=dy[qindex]=NAN;
+	      b_ind[qindex]=c_ind[qindex]=d_ind[qindex]=GAL_BLANK_UINT32;
+	    }
 	  continue;
 	}
 
@@ -956,23 +1023,30 @@ make_quads_worker(void *in_prm)
       /* Identify which vertices are A, B, C and D (based on special
 	 geometric definitions described above) and calculate the
 	 hashes.  */
-      rel_brightness[qindex]=hash_build_write(p, qindex, good_vertices,
-					      abcd, geohash);
-      cx[qindex]=geohash[0];    cy[qindex]=geohash[1];
-      dx[qindex]=geohash[2];    dy[qindex]=geohash[3];
-      a_ind[qindex]=abcd[0];    b_ind[qindex]=abcd[1];
-      c_ind[qindex]=abcd[2];    d_ind[qindex]=abcd[3];
+      rel_b=hash_build_write(p, qindex, good_vertices, abcd, geohash);
 
       /* For a check:
-      printf("\n======\nFinal Quad hashes:\n");
-      printf("cx,cy,dx,dy: %g, %g, %g, %g\n", cx[qindex], cy[qindex],
-	     dx[qindex], dy[qindex]);
-      printf("a_ind,b_ind,c_ind,d_ind: %u, %u, %u, %u\n",
-	     a_ind[qindex], b_ind[qindex],
-	     c_ind[qindex], d_ind[qindex]);
-      printf("rel_brightness: %u\n", rel_brightness[qindex]);
+      printf("\n======\nQuad hashes:\n");
+      printf("cx,cy,dx,dy: %g, %g, %g, %g\n", geohash[0], geohash[1],
+             geohash[2], geohash[3]);
+      printf("a_ind,b_ind,c_ind,d_ind: %u, %u, %u, %u\n", abcd[0], abcd[1],
+	     abcd[2], abcd[3]);
+      printf("rel_brightness: %u\n", rel_b);
       exit(0);
       */
+
+      /* If we are building reference catalog quads, then write the
+	 values into the respective column. */
+      if(p->c1==p->ra)
+	{
+	  cx[qindex]=geohash[0];    cy[qindex]=geohash[1];
+	  dx[qindex]=geohash[2];    dy[qindex]=geohash[3];
+	  a_ind[qindex]=abcd[0];    b_ind[qindex]=abcd[1];
+	  c_ind[qindex]=abcd[2];    d_ind[qindex]=abcd[3];
+	  rel_brightness[qindex]=rel_b;
+	}
+      else
+	match_quad_to_ref(p, matched, abcd, geohash, rel_b);
     }
 
   /* Close the region file (if it was created). */
@@ -1096,8 +1170,8 @@ highlevel_reference(char *reference_name, char *kdtree_name,
 {
   size_t kdtree_root;
   float max_mag_diff=2;
-  size_t num_threads=12;
-  size_t x_numbin=10, y_numbin=10, num_in_gpixel=10;
+  size_t num_threads=1;
+  size_t x_numbin=5, y_numbin=5, num_in_gpixel=5;
 
   /* Internal. */
   struct params p={0};
@@ -1259,6 +1333,13 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
     error(EXIT_FAILURE, 0, "%s: %s 11th column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->right->type, 1));
 
+  /* We don't need all of the columns to remain as lists any more so
+     remove the extra 'next' pointers (that can cause problems when
+     feeding to kd-tree functions for example). */
+  p->dy->next=NULL;
+  p->a_ind->next=p->b_ind->next=p->c_ind->next=p->d_ind->next=NULL;
+
+
   /* Allocate array keeping a separate list for each thread. */
   errno=0;
   p->matched = malloc(num_threads * sizeof *(p->matched) );
@@ -1278,8 +1359,9 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
   struct params p={0};
 
   size_t num_threads=1;
+  float max_mag_diff=2;
   struct grid in_grid={0};
-  size_t x_numbin=10, y_numbin=10, num_in_gpixel=10;
+  size_t x_numbin=5, y_numbin=5, num_in_gpixel=10;
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
@@ -1293,11 +1375,12 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
                                            num_quads, &in_grid,
                                            num_in_gpixel);
 
-  /* Add last configuration and spin-off the threads.
+  /* Add last configuration and spin-off the threads. */
+  p.kdtree_root=kdtree_root;
+  p.max_mag_diff=max_mag_diff;
   p.max_star_dis_in_quad=max(in_grid.step_size[0],
                              in_grid.step_size[1]);
   gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
-  */
 }
 
 
