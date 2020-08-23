@@ -5,8 +5,6 @@
 #include <error.h>
 #include <stdbool.h>
 
-#include "kdtree.c"
-
 #include <gnuastro/qsort.h>
 #include <gnuastro/table.h>
 #include <gnuastro/threads.h>
@@ -14,7 +12,8 @@
 #include <gnuastro/polygon.h>
 #include <gnuastro/statistics.h>
 
-
+#include "kdtree.c"
+#include "match.h"
 
 
 
@@ -1064,7 +1063,7 @@ make_quads_worker(void *in_prm)
 
 
 static void
-read_ref_and_query(struct params *p, int r1q0, char *filename)
+read_ref_and_query(struct params *p, int r1q0, char *filename, char *hdu)
 {
   gal_list_str_t *cols=NULL;
   gal_data_t *data, *c1, *c2, *mag;
@@ -1079,7 +1078,7 @@ read_ref_and_query(struct params *p, int r1q0, char *filename)
   gal_list_str_reverse(&cols);
 
   /* Read the columns and make sure that only three are found. */
-  data=gal_table_read(filename, "1", NULL, cols,
+  data=gal_table_read(filename, hdu, NULL, cols,
 		      GAL_TABLE_SEARCH_NAME, 0, -1, 0, NULL);
   if(gal_list_data_number(data) != 3)
     error(EXIT_FAILURE, 0, "%s: %s should atleast have 3 columns "
@@ -1107,10 +1106,11 @@ static void
 prepare_reference(struct params *p, char *reference_name, size_t num_quads)
 {
   int quitemmap=1;
+  char *refhdu="1";
   size_t minmapsize=-1;
 
   /* Read the three necessary references columns. */
-  read_ref_and_query(p, 1, reference_name);
+  read_ref_and_query(p, 1, reference_name, refhdu);
 
   /* For the core inputs, set the pointers to the reference arrays. */
   p->c1  = p->ra;
@@ -1172,8 +1172,8 @@ high_level_reference_write(gal_data_t *data, size_t kdtree_root,
 
   /* Add the necessary keywords to write in the output. */
   gal_fits_key_list_title_add_end(&keylist, "Information on table", 0);
-  gal_fits_key_list_add_end(&keylist, GAL_TYPE_SIZE_T, "KDROOT", 0,
-			    &kdtree_root, 0,
+  gal_fits_key_list_add_end(&keylist, GAL_TYPE_SIZE_T,
+			    GAL_MATCH_KDROOT_KEY_NAME, 0, &kdtree_root, 0,
 			    "k-d tree root index (counting from 0)", 0,
 			    "counter", 0);
   gal_fits_key_write_filename("INPUT", in_filename, &keylist, 0);
@@ -1283,11 +1283,13 @@ static void
 match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 	      char *query_name, size_t num_threads)
 {
+  char *refhdu="1", *qhdu="1";
   gal_data_t *ref_quad_kdtree;
+  gal_data_t *keysll=gal_data_array_calloc(1);
 
   /* Read the reference and query tables. */
-  read_ref_and_query(p, 0, query_name);
-  read_ref_and_query(p, 1, reference_name);
+  read_ref_and_query(p, 0, query_name, qhdu);
+  read_ref_and_query(p, 1, reference_name, refhdu);
 
   /* Set the pointers to the query arrays. */
   p->c1  = p->x;
@@ -1375,6 +1377,16 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
   p->dy->next=NULL;
   p->a_ind->next=p->b_ind->next=p->c_ind->next=p->d_ind->next=NULL;
 
+  /* Read the k-d tree root node. */
+  keysll->type=GAL_TYPE_SIZE_T;
+  keysll->name=GAL_MATCH_KDROOT_KEY_NAME;
+  gal_fits_key_read(kdtree_name, refhdu, keysll, 0, 0);
+  if(keysll->status)
+    error(EXIT_FAILURE, 0, "%s (hdu: %s): no '%s' keyword found",
+	  kdtree_name, refhdu, GAL_MATCH_KDROOT_KEY_NAME);
+  p->kdtree_root=((size_t *)(keysll->array))[0];
+  keysll->name=NULL;
+  gal_data_array_free(keysll, 1, 1);
 
   /* Allocate array keeping a separate list for each thread. */
   errno=0;
@@ -1382,8 +1394,6 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
   if(p->matched==NULL)
     error(EXIT_FAILURE, errno, "%s: couldn't allocate %zu bytes for "
 	  "'p->matched'", __func__, num_threads * sizeof *(p->matched));
-
-  /*  */
 }
 
 
@@ -1396,18 +1406,14 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
 {
   struct params p={0};
 
+  size_t num_threads=1;
   float max_mag_diff=2;
   struct grid in_grid={0};
-  size_t kdtree_root, num_threads=1;
   size_t x_numbin=5, y_numbin=5, num_in_gpixel=10;
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
   match_prepare(&p, reference_name, kdtree_name, query_name, num_threads);
-
-  /*****************************************/
-  printf("\n%s: kdtree_root: %zu.\n", __func__, p.kdtree_root); exit(0);
-  /*****************************************/
 
   /* make a box-grid */
   grid_make(p.x, p.y, x_numbin, y_numbin, &in_grid);
@@ -1418,7 +1424,6 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
                                            num_in_gpixel);
 
   /* Add last configuration and spin-off the threads. */
-  p.kdtree_root=kdtree_root;
   p.max_mag_diff=max_mag_diff;
   p.max_star_dis_in_quad=max(in_grid.step_size[0],
                              in_grid.step_size[1]);
