@@ -1250,10 +1250,9 @@ high_level_reference_write(struct params *p, char *in_filename,
 
 static void
 highlevel_reference(char *reference_name, char *kdtree_name,
-		    char *ds9regprefix)
+		    char *ds9regprefix, size_t numthreads)
 {
   float max_mag_diff=2;
-  size_t num_threads=1;
   size_t x_numbin=5, y_numbin=5, num_in_gpixel=5;
 
   /* Internal. */
@@ -1277,7 +1276,7 @@ highlevel_reference(char *reference_name, char *kdtree_name,
                                            num_in_gpixel);
 
   /* Spin-off the threads to calculate quad hashes. */
-  gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
+  gal_threads_spin_off(make_quads_worker, &p, num_quads, numthreads);
 
   /* Construct a tree and fix the column pointers. Note that the
      kd-tree is ignorant to our higher-level columns. We only want to
@@ -1460,18 +1459,16 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 
 static void
 highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
-		char *output_name)
+		char *output_name, size_t numthreads)
 {
   struct params p={0};
-
-  size_t num_threads=1;
   float max_mag_diff=2;
   struct grid in_grid={0};
   size_t x_numbin=5, y_numbin=5, num_in_gpixel=10;
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
-  match_prepare(&p, reference_name, kdtree_name, query_name, num_threads);
+  match_prepare(&p, reference_name, kdtree_name, query_name, numthreads);
 
   /* make a box-grid */
   grid_make(p.x, p.y, x_numbin, y_numbin, &in_grid);
@@ -1485,7 +1482,7 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
   p.max_mag_diff=max_mag_diff;
   p.max_star_dis_in_quad=max(in_grid.step_size[0],
                              in_grid.step_size[1]);
-  gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
+  gal_threads_spin_off(make_quads_worker, &p, num_quads, numthreads);
 }
 
 
@@ -1514,6 +1511,7 @@ int
 main()
 {
   int buildref=1;
+  size_t numthreads=1;
 
   /* Reference catalog names. */
   char *ds9regprefix="./build/quads";
@@ -1526,11 +1524,12 @@ main()
 
   /* Process reference catalog. */
   if(buildref)
-    highlevel_reference(reference_name, kdtree_name, ds9regprefix);
+    highlevel_reference(reference_name, kdtree_name, ds9regprefix,
+			numthreads);
 
   /* Find quads on the query image and match them. */
   highlevel_query(reference_name, kdtree_name, query_name,
-		  output_name);
+		  output_name, numthreads);
 
   /* Finish the program successfully. */
   return EXIT_SUCCESS;
