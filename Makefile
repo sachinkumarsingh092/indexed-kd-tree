@@ -2,7 +2,7 @@
 
 CC := gcc
 CC := ${CC}
-CFLAGS := -Wall -O3 -g
+CFLAGS := -Wall -O0 -g -Wno-unused-function
 INCLUDES := -I/usr/local/include
 LIBS := /usr/local/lib/libgnuastro.a\
 	-lgit2 -ltiff -llzma -ljpeg -L/usr/local/lib -lwcs -lcfitsio -lz \
@@ -14,8 +14,8 @@ REGION :=
 
 
 compile: ${PROGNAME}.c
-	rm -f ./build/*;		\
-	${CC} ${CFLAGS} -g -O0 $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
+	rm -f ./build/*
+	${CC} ${CFLAGS} $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
 
 ds9:
 	ds9 test-pv.fits -zscale -zoom to fit -regions ${REGION}.reg

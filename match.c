@@ -1164,11 +1164,34 @@ prepare_reference(struct params *p, char *reference_name, size_t num_quads)
 
 
 
-static size_t
+static void
+high_level_reference_write(gal_data_t *data, size_t kdtree_root,
+			   char *in_filename, char *out_filename)
+{
+  gal_fits_list_key_t *keylist=NULL;
+
+  /* Add the necessary keywords to write in the output. */
+  gal_fits_key_list_title_add_end(&keylist, "Information on table", 0);
+  gal_fits_key_list_add_end(&keylist, GAL_TYPE_SIZE_T, "KDROOT", 0,
+			    &kdtree_root, 0,
+			    "k-d tree root index (counting from 0)", 0,
+			    "counter", 0);
+  gal_fits_key_write_filename("INPUT", in_filename, &keylist, 0);
+
+  /* Write the final table with all the quad information and the
+     respective kd-tree. */
+  gal_table_write(data, &keylist, NULL, GAL_TABLE_FORMAT_BFITS,
+                  out_filename, "quad-kdtree", 0);
+}
+
+
+
+
+
+static void
 highlevel_reference(char *reference_name, char *kdtree_name,
 		    char *ds9regprefix)
 {
-  size_t kdtree_root;
   float max_mag_diff=2;
   size_t num_threads=1;
   size_t x_numbin=5, y_numbin=5, num_in_gpixel=5;
@@ -1203,22 +1226,21 @@ highlevel_reference(char *reference_name, char *kdtree_name,
      function. Afterwards, we'll set the 'next' pointers again to
      write them all into one final table. */
   p.dy->next=NULL;
-  p.left=gal_kdtree_create(p.cx, &kdtree_root);
+  p.left=gal_kdtree_create(p.cx, &p.kdtree_root);
   p.dy->next=p.rel_brightness;
   p.d_ind->next=p.left;
   p.right=p.left->next;
 
-  /* Write the final table with all the quad inforamations
-     and the respective kd-tree. */
-  gal_table_write(p.cx, NULL, GAL_TABLE_FORMAT_BFITS,
-                  kdtree_name, "quad-kdtree", 0);
+  /* Write the k-d tree and all quad data into a table, and include
+     the kdtree root index and input filename as keyword arguments. */
+  high_level_reference_write(p.cx, p.kdtree_root, reference_name,
+			     kdtree_name);
 
-  /* Clean up and return. */
+  /* Clean up. */
+  gal_list_data_free(p.cx);
   gal_data_free(p.ra);    p.ra=NULL;
   gal_data_free(p.dec);   p.dec=NULL;
   gal_data_free(p.r_mag); p.r_mag=NULL;
-  gal_list_data_free(p.cx);
-  return kdtree_root;
 }
 
 
@@ -1243,6 +1265,20 @@ highlevel_reference(char *reference_name, char *kdtree_name,
 /***********************************************************/
 /********      Match X,Y quads with ref quads       ********/
 /***********************************************************/
+/*
+static size_t
+match_prepare_read_kdtree_root(char *filename)
+{
+  fitsfile *fptr;
+
+  gal_fits_key_read(filename’, char ‘*hdu’, gal_data_t
+		    ‘*keysll’, int ‘readcomment’, int ‘readunit’)
+}
+*/
+
+
+
+
 static void
 match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 	      char *query_name, size_t num_threads)
@@ -1346,6 +1382,8 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
   if(p->matched==NULL)
     error(EXIT_FAILURE, errno, "%s: couldn't allocate %zu bytes for "
 	  "'p->matched'", __func__, num_threads * sizeof *(p->matched));
+
+  /*  */
 }
 
 
@@ -1354,18 +1392,22 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 
 static void
 highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
-		char *output_name, size_t kdtree_root)
+		char *output_name)
 {
   struct params p={0};
 
-  size_t num_threads=1;
   float max_mag_diff=2;
   struct grid in_grid={0};
+  size_t kdtree_root, num_threads=1;
   size_t x_numbin=5, y_numbin=5, num_in_gpixel=10;
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
   match_prepare(&p, reference_name, kdtree_name, query_name, num_threads);
+
+  /*****************************************/
+  printf("\n%s: kdtree_root: %zu.\n", __func__, p.kdtree_root); exit(0);
+  /*****************************************/
 
   /* make a box-grid */
   grid_make(p.x, p.y, x_numbin, y_numbin, &in_grid);
@@ -1408,10 +1450,10 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
 int
 main()
 {
-  size_t kdtree_root;
+  int buildref=1;
 
   /* Reference catalog names. */
-  char ds9regprefix[]="./build/quads";
+  char *ds9regprefix="./build/quads";
   char *kdtree_name="./build/kdtree.fits";
   char *reference_name="./input/reference.fits";
 
@@ -1419,13 +1461,13 @@ main()
   char *query_name="./input/query.fits";
   char *output_name = "./build/matched-out.fits";
 
-  /* Quad-hashes creation */
-  kdtree_root=highlevel_reference(reference_name, kdtree_name, ds9regprefix);
-  printf("kdtree_root: %zu\n", kdtree_root);
+  /* Process reference catalog. */
+  if(buildref)
+    highlevel_reference(reference_name, kdtree_name, ds9regprefix);
 
   /* Find quads on the query image and match them. */
   highlevel_query(reference_name, kdtree_name, query_name,
-		  output_name, kdtree_root);
+		  output_name);
 
   /* Finish the program successfully. */
   return EXIT_SUCCESS;
