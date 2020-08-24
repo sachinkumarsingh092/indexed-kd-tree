@@ -82,6 +82,7 @@ struct params
   char *ds9regprefix;
 
   /* Internal info for building quads. */
+  float magnitude_error;
   size_t *brightest_star_id;
   double max_star_dis_in_quad;
 
@@ -206,12 +207,13 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
 
 
 static FILE *
-match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id)
+match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id,
+			   int r1q0)
 {
   FILE *regfile;
 
   /* Set the filename (with thread number). */
-  sprintf(regname, "%s-%zu.reg", regprefix, id);
+  sprintf(regname, "%s-%zu-%s.reg", regprefix, id, r1q0?"ref":"query");
 
   /* Open the file. */
   errno=0;
@@ -452,6 +454,139 @@ sort_by_distance(const void *a, const void *b)
 
 
 
+
+/* Choose a different vertice. */
+static int
+select_vertices_retry(size_t ngood, struct quad_vertex *qvertices,
+		      struct quad_vertex *good_vertices, int *counter)
+{
+  size_t i, ind[4];
+
+  /* Make the temporary quad and assign relative positions
+     of sorted stars to it. For temporaay C and D, we use the stars
+     at 0.5 and 0.75 quantiles respectively. */
+  switch(ngood)
+    {
+    case 4:  ind[0]=0; ind[1]=1;       ind[2]=2;         ind[3]=3;       break;
+    case 5:  ind[0]=0; ind[1]=2;       ind[2]=3;         ind[3]=4;       break;
+    default: ind[0]=0; ind[1]=ngood/2; ind[2]=ngood*3/4; ind[3]=ngood-1; break;
+    }
+
+  /* If any of the vertices have to be changed (any of the counter
+     elements are non-zero), then do it. */
+  if(counter[0]!=0 || counter[1]!=0 || counter[2]!=0 || counter[3]!=0)
+    {
+      /* If there are 4 good points, we can't do anything else, just
+	 ignore this quad. */
+      if(ngood==4) return 0;
+
+      /* Increment the indexs by the requested amount. */
+      for(i=0;i<4;++i) ind[i] += counter[i];
+
+      /* Make sure that the indexs don't collide and that the last one
+	 hasn't gone over the limit. */
+      if(ind[3]>=ngood) return 0;
+      for(i=0;i<3;++i) if( ind[i]==ind[i+1] ) return 0;
+    }
+
+  /* Put the proper vertice into the proper location. */
+  good_vertices[0] = qvertices[ ind[0] ];
+  good_vertices[1] = qvertices[ ind[1] ];
+  good_vertices[2] = qvertices[ ind[2] ];
+  good_vertices[3] = qvertices[ ind[3] ];
+  return 1;
+}
+
+
+
+
+
+/* Since we use relative magnitude as one matching query, we don't
+   want the quads to be created with stars that have magnitudes that
+   are too similar to each other. */
+static int
+select_vertices(float *mag_arr, float magnitude_error, size_t ngood,
+		struct quad_vertex *qvertices,
+		struct quad_vertex *good_vertices)
+{
+  size_t i, j, ind;
+  int vertices_found=0;
+  float tmpflt, magnitude[4];
+  size_t tmpind, orig_ind[4];
+  int counter[4]={0,0,0,0};
+
+  /* Continue the loop until the vertices are found. */
+  while(vertices_found==0)
+    {
+      /* Set the candidates. */
+      if( select_vertices_retry(ngood, qvertices, good_vertices,
+			        counter)==0 )
+	return 0;
+
+      /* Read their magnitudes. */
+      orig_ind[0]=0; orig_ind[1]=1; orig_ind[2]=2; orig_ind[3]=3;
+      for(i=0;i<4;++i) magnitude[i]=mag_arr[ good_vertices[i].index ];
+
+      /* For a check.
+      printf("ngood: %zu\n", ngood);
+      printf("%g, %g, %g, %g\n", magnitude[0], magnitude[1],
+	     magnitude[2], magnitude[3]);
+      */
+
+      /* Use the simple bubble sorting to sort the four points. There are
+	 only four points, so there is no need for more optimized
+	 methods. */
+      for(i=0; i<4; ++i)
+	for(j=0; j<4; ++j)
+	  if(magnitude[i] < magnitude[j])
+	    {
+	      /* Swap the values. */
+	      tmpflt       = magnitude[i];    tmpind      = orig_ind[i];
+	      magnitude[i] = magnitude[j];    orig_ind[i] = orig_ind[j];
+	      magnitude[j] = tmpflt;          orig_ind[j] = tmpind;
+	    }
+
+      /* For a check.
+      printf("%g, %g, %g, %g  -- %zu, %zu, %zu, %zu\n", magnitude[0],
+	     magnitude[1], magnitude[2], magnitude[3], orig_ind[0],
+	     orig_ind[1], orig_ind[2], orig_ind[3]);
+      */
+
+      /* If two elements have a similar magnitude, increment the
+	 pointer of the first (lower-value) one. */
+      vertices_found=1;
+      for(i=0;i<3;++i)
+	if(magnitude[i+1]-magnitude[i]<magnitude_error)
+	  {
+	    /* Set the index to increment. Note that we don't want to
+	       change the brightest/reference star (with the lowest
+	       magnitude): or the first element. Recall that the stars
+	       are originally sorted by distance from the reference
+	       star.*/
+	    /*printf("TOO NEAR: %zu & %zu\n", orig_ind[i], orig_ind[i+1]);*/
+	    if(orig_ind[i]==0) ind=orig_ind[i+1];
+	    else ind = orig_ind[i]<orig_ind[i+1] ? orig_ind[i] : orig_ind[i+1];
+
+	    /* If the element to change is the last one, we need to
+	       come back (get closer to the brightest/reference
+	       star). */
+	    if(ind==3) --counter[ ind ];
+	    else       ++counter[ ind ];
+	    vertices_found=0;
+	    break;
+	  }
+
+      /* For a check:
+      printf("counters: %d, %d, %d, %d\n", counter[0], counter[1],
+	     counter[2], counter[3]);
+      */
+    }
+
+  return 1;
+}
+
+
+
 /* Build the quad structure of the desired star. */
 static int
 quad_from_point(struct params *p, size_t qindex,
@@ -478,11 +613,19 @@ quad_from_point(struct params *p, size_t qindex,
   ref_c2  = c2[  bsi[qindex] ];
   ref_mag = mag[ bsi[qindex] ];
 
+  /* Start by adding the current star (because it will be excluded in
+     the next step where we search the others because we only want
+     objects with larger magnitudes). */
+  good_stars=NULL;
+  gal_list_sizet_add(&good_stars, bsi[qindex]);
+
   /* Go over all the stars and keep a list of candidates to constuct
      the quad. The candidates have to be within a certain spatial
-     range, and have to be fainter than the "brightest_star", but not
-     too fainter, only by 'max_mag_diff' (usually 2 or 3). */
-  good_stars=NULL;
+     range around the bright star source of the quad, but also and
+     have to be fainter, but not too fainter, only by 'max_mag_diff'
+     (usually 2 or 3). Note that we don't want the other stars to have
+     a magnitude too close to the reference/bright star because it may
+     be due to */
   for(i=0;i<npoints;++i)
     if ( c1[i]  <= ref_c1+max_dist
 	 && c1[i]  >= ref_c1-max_dist
@@ -533,30 +676,11 @@ quad_from_point(struct params *p, size_t qindex,
   /* Sort on the basis of distance from the brightest. */
   qsort(qvertices, ngood, sizeof(struct quad_vertex), sort_by_distance);
 
-  /* Make the temporary quad and assign relative positions
-     of sorted stars to it. For temporaay C and D, we use the stars
-     at 0.5 and 0.75 quantiles respectively. */
-  switch(ngood)
-    {
-    case 4:
-      good_vertices[0] = qvertices[0];
-      good_vertices[1] = qvertices[1];
-      good_vertices[2] = qvertices[2];
-      good_vertices[3] = qvertices[3];
-      break;
-    case 5:
-      good_vertices[0] = qvertices[0];
-      good_vertices[1] = qvertices[2];
-      good_vertices[2] = qvertices[3];
-      good_vertices[3] = qvertices[4];
-      break;
-    default:
-      good_vertices[0] = qvertices[0];
-      good_vertices[1] = qvertices[ngood/2];
-      good_vertices[2] = qvertices[ngood*3/4];
-      good_vertices[3] = qvertices[ngood-1];
-      break;
-    }
+  /* Set the stars to use, make sure they are sufficiently different
+     in magnitude. */
+  if( select_vertices(p->mag->array, p->magnitude_error, ngood,
+		      qvertices, good_vertices)==0 )
+    return 0;
 
   /* Clean up and return a success value (1). */
   free(qvertices);
@@ -809,6 +933,7 @@ hash_geometric_finalize(struct params *p, size_t *abcd, double *geohash)
 static uint16_t
 hash_brightness(struct params *p, size_t *abcd)
 {
+  int debug=0;
   size_t i, j;
   float tmpflt;
   float magnitude[4];
@@ -827,15 +952,17 @@ hash_brightness(struct params *p, size_t *abcd)
       magnitude[i]=mag_arr[ abcd[i] ];
     }
 
-  /* For a check:
-  printf("\n========================"
-	 "\n Magnitudes of A,B,C & D."
-	 "\n========================\n");
-  printf("A: %g\n", magnitude[0]);
-  printf("B: %g\n", magnitude[1]);
-  printf("C: %g\n", magnitude[2]);
-  printf("D: %g\n", magnitude[3]);
-  */
+  /* For a check */
+  if(debug)
+    {
+      printf("\n========================"
+	     "\n Magnitudes of A,B,C & D."
+	     "\n========================\n");
+      printf("A: %g\n", magnitude[0]);
+      printf("B: %g\n", magnitude[1]);
+      printf("C: %g\n", magnitude[2]);
+      printf("D: %g\n", magnitude[3]);
+    }
 
   /* Sort these 4 values in ascending order using bubble sort. Its
      only four points, so its not worth calling more complex
@@ -876,18 +1003,20 @@ hash_brightness(struct params *p, size_t *abcd)
      which is 8737 in decimal system. */
   rel_brightness = (a_bit | b_bit | c_bit | d_bit);
 
-  /* For a check:
-  printf("\n============================================================"
-	 "\n Magnitudes of A,B,C & D"
-	 "\n (be careful with the bit-sequence in little-endian systems)"
-	 "\n============================================================\n");
-  printf("A: %zu: %s\n", rel_mag_index[0], gal_type_bit_string(&a_bit, 2));
-  printf("B: %zu: %s\n", rel_mag_index[1], gal_type_bit_string(&b_bit, 2));
-  printf("C: %zu: %s\n", rel_mag_index[2], gal_type_bit_string(&c_bit, 2));
-  printf("D: %zu: %s\n", rel_mag_index[3], gal_type_bit_string(&d_bit, 2));
-  printf("Final: %u: %s\n", rel_brightness,
-	 gal_type_bit_string(&rel_brightness, 2));
-  */
+  /* For a check: */
+  if(debug)
+    {
+      printf("\n============================================================"
+	     "\n Magnitudes of A,B,C & D"
+	     "\n (be careful with the bit-sequence in little-endian systems)"
+	     "\n============================================================\n");
+      printf("A: %zu: %s\n", rel_mag_index[0], gal_type_bit_string(&a_bit, 2));
+      printf("B: %zu: %s\n", rel_mag_index[1], gal_type_bit_string(&b_bit, 2));
+      printf("C: %zu: %s\n", rel_mag_index[2], gal_type_bit_string(&c_bit, 2));
+      printf("D: %zu: %s\n", rel_mag_index[3], gal_type_bit_string(&d_bit, 2));
+      printf("Final: %u: %s\n", rel_brightness,
+	     gal_type_bit_string(&rel_brightness, 2));
+    }
 
   /* Return the 16-bit integer. */
   return rel_brightness;
@@ -974,7 +1103,8 @@ match_quad_to_ref(struct params *p, struct matched_points *matched,
 				       geohash, &least_dist);
 
   /* For a check: */
-  printf("refquad: %zu (dist: %g)\n", qindex, least_dist);
+  printf("------------------------------------------------\n");
+  printf("qindex: %zu (dist: %g)\n", qindex, least_dist);
   printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
   printf("------------------------------------------------\n");
   printf("%-10s%-30u%u\n", "rel_b", rel_brightness[qindex], rel_b);
@@ -1022,7 +1152,7 @@ make_quads_worker(void *in_prm)
   char regname[100];
   FILE *regfile=NULL;
   int make_ds9_reg=1, quadfound;
-  struct quad_vertex good_vertices[4]={0};
+  struct quad_vertex good_vertices[4];
 
   /* For easy reading. */
   double *c1=p->c1->array, *c2=p->c2->array;
@@ -1039,12 +1169,13 @@ make_quads_worker(void *in_prm)
      its own region file, you can then load them together into DS9. */
   if(make_ds9_reg)
     regfile=match_quad_as_ds9_reg_init(regname, p->ds9regprefix,
-				       tprm->id);
+				       tprm->id, p->c1==p->ra);
 
   /* Go over all the quads that were assigned to this thread. */
   for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i)
     {
-      /* Extract this quad's index in the final table. */
+      /* Extract this quad's index in the final table and initalize
+	 the good_vertices. */
       qindex=tprm->indexs[i];
 
       /**************FOR TESTS*******************
@@ -1250,10 +1381,11 @@ high_level_reference_write(struct params *p, char *in_filename,
 
 static void
 highlevel_reference(char *reference_name, char *kdtree_name,
-		    char *ds9regprefix, size_t numthreads)
+		    char *ds9regprefix, float magnitude_error,
+		    size_t numthreads)
 {
   float max_mag_diff=2;
-  size_t x_numbin=5, y_numbin=5, num_in_gpixel=5;
+  size_t x_numbin=5, y_numbin=5, num_in_gpixel=50;
 
   /* Internal. */
   struct params p={0};
@@ -1263,6 +1395,7 @@ highlevel_reference(char *reference_name, char *kdtree_name,
   /* Read the input, allocate output. */
   p.max_mag_diff=max_mag_diff;
   p.ds9regprefix=ds9regprefix;
+  p.magnitude_error=magnitude_error;
   prepare_reference(&p, reference_name, num_quads);
 
   /* Build a box-grid, and set 'max_star_dis_in_quad'. */
@@ -1459,7 +1592,7 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 
 static void
 highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
-		char *output_name, size_t numthreads)
+		char *output_name, float magnitude_error, size_t numthreads)
 {
   struct params p={0};
   float max_mag_diff=2;
@@ -1468,6 +1601,7 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
+  p.magnitude_error=magnitude_error;
   match_prepare(&p, reference_name, kdtree_name, query_name, numthreads);
 
   /* make a box-grid */
@@ -1511,7 +1645,9 @@ int
 main()
 {
   int buildref=1;
+
   size_t numthreads=1;
+  float magnitude_error=0.1;
 
   /* Reference catalog names. */
   char *ds9regprefix="./build/quads";
@@ -1525,11 +1661,11 @@ main()
   /* Process reference catalog. */
   if(buildref)
     highlevel_reference(reference_name, kdtree_name, ds9regprefix,
-			numthreads);
+			magnitude_error, numthreads);
 
   /* Find quads on the query image and match them. */
   highlevel_query(reference_name, kdtree_name, query_name,
-		  output_name, numthreads);
+		  output_name, magnitude_error, numthreads);
 
   /* Finish the program successfully. */
   return EXIT_SUCCESS;
