@@ -1175,12 +1175,12 @@ high_level_reference_write(gal_data_t *data, size_t kdtree_root,
   gal_fits_key_list_add_end(&keylist, GAL_TYPE_SIZE_T,
 			    GAL_MATCH_KDROOT_KEY_NAME, 0, &kdtree_root, 0,
 			    "k-d tree root index (counting from 0)", 0,
-			    "counter", 0);
+			    "counter");
   gal_fits_key_write_filename("INPUT", in_filename, &keylist, 0);
 
   /* Write the final table with all the quad information and the
      respective kd-tree. */
-  gal_table_write(data, &keylist, NULL, GAL_TABLE_FORMAT_BFITS,
+  gal_table_write(data, &keylist, GAL_TABLE_FORMAT_BFITS,
                   out_filename, "quad-kdtree", 0);
 }
 
@@ -1430,6 +1430,52 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
   gal_threads_spin_off(make_quads_worker, &p, num_quads, num_threads);
 }
 
+
+
+
+
+
+/* To calculate the relative translations, scaling and roatation
+   we calculate the homogenous matrix for multiple transformations
+   for the following matrix equation:
+
+      | x |  = | s 0 0 | | cos(theta) -sin(theta) 0 | | 0 0 u |  | ra  |
+      | y |  = | 0 s 0 | | sin(theta)  cos(theta) 0 | | 0 0 v |  | dec |
+      | 1 |  = | 0 0 1 | |    0           0       1 | | 0 0 1 |  | 1   |
+                (scale)          (roatation)        (translation)
+
+   Using 3 stars in the quad except A, we make equations and use them to
+   find the values of s, theta, u and v.
+
+   For easy calculation, we make new variables:
+                  X=s.cos(theta) and Y=s.sin(theta). 
+   
+   Then we put these variables in the 3 equations above to find their values.
+   Using X and Y, we find:
+                          theta = arctan(Y/X)
+
+   Then we use these values to find u and v from any of the above equations.
+*/
+static void
+match_create_wcs_matrix(struct params *p, double *s, double *theta,
+                        double *u, double *v)
+{
+  size_t i;
+  double X, Y;
+  double *x=p->x->array;
+  double *y=p->y->array;
+  double *b_ind=p->b_ind->array;
+  double *c_ind=p->c_ind->array;
+  double *d_ind=p->d_ind->array;
+  double *ra=p->ra->array;
+  double *dec=p->dec->array;
+
+  for(i=0; i<p->x->size; ++i)
+    {
+      
+    }
+
+}
 
 
 
