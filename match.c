@@ -222,7 +222,7 @@ match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id,
 
   /* Write basic information. */
   fprintf(regfile, "# Region file format: DS9 version 4.1\n");
-  fprintf(regfile, "fk5\n");
+  fprintf(regfile, "%s\n", r1q0?"fk5":"image");
 
   /* Return the file pointer. */
   return regfile;
@@ -235,7 +235,7 @@ match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id,
 /* Add the given polygon into the given file. */
 static void
 match_quad_as_ds9_reg(FILE *regfile, double *c1, double *c2, size_t qindex,
-		      struct quad_vertex *good_vertices)
+		      struct quad_vertex *good_vertices, int r1q0)
 {
   size_t ordinds[8];
   double ds9polygon[8]={
@@ -244,14 +244,63 @@ match_quad_as_ds9_reg(FILE *regfile, double *c1, double *c2, size_t qindex,
     c1[good_vertices[2].index], c2[good_vertices[2].index],
     c1[good_vertices[3].index], c2[good_vertices[3].index]};
   gal_polygon_vertices_sort(ds9polygon, 4, ordinds);
-  fprintf(regfile, "polygon(%g,%g,%g,%g,%g,%g,%g,%g) # text={%zu}\n",
+  fprintf(regfile, "polygon(%g,%g,%g,%g,%g,%g,%g,%g) # text={%zu-%s}\n",
 	  ds9polygon[ordinds[0]*2], ds9polygon[ordinds[0]*2+1],
 	  ds9polygon[ordinds[1]*2], ds9polygon[ordinds[1]*2+1],
 	  ds9polygon[ordinds[2]*2], ds9polygon[ordinds[2]*2+1],
 	  ds9polygon[ordinds[3]*2], ds9polygon[ordinds[3]*2+1],
-	  qindex);
+	  qindex, r1q0?"r":"q");
 }
 
+
+
+
+
+static void
+match_quads_as_ds9_reg_matched(double *ra, double *dec, double *x, double *y,
+			       uint32_t *a_ind, uint32_t *b_ind,
+			       uint32_t *c_ind, uint32_t *d_ind,
+			       size_t *abcd, size_t qindex)
+{
+  FILE *regfile;
+  size_t ordinds[8];
+  char regname[1000];
+  static int counter=0;
+  char regprefix[]="./build/matched";
+  double ref[8]={
+    ra[a_ind[qindex]], dec[a_ind[qindex]],
+    ra[b_ind[qindex]], dec[b_ind[qindex]],
+    ra[c_ind[qindex]], dec[c_ind[qindex]],
+    ra[d_ind[qindex]], dec[d_ind[qindex]],
+  };
+  double query[8]={
+    x[abcd[0]], y[abcd[0]],          x[abcd[1]], y[abcd[1]],
+    x[abcd[2]], y[abcd[2]],          x[abcd[3]], y[abcd[3]],
+  };
+
+  /* Initialize the file and and put the 'fk5' marker (for the
+     reference catalog) and draw the reference quad. */
+  regfile=match_quad_as_ds9_reg_init(regname, regprefix, counter++, 1);
+  gal_polygon_vertices_sort(ref, 4, ordinds);
+  fprintf(regfile, "polygon(%g,%g,%g,%g,%g,%g,%g,%g) # text={%zu-%s}\n",
+	  ref[ordinds[0]*2], ref[ordinds[0]*2+1],
+	  ref[ordinds[1]*2], ref[ordinds[1]*2+1],
+	  ref[ordinds[2]*2], ref[ordinds[2]*2+1],
+	  ref[ordinds[3]*2], ref[ordinds[3]*2+1], qindex, "r");
+
+  /* Add the query quad. */
+  fprintf(regfile, "image\n");
+  gal_polygon_vertices_sort(query, 4, ordinds);
+  fprintf(regfile, "polygon(%g,%g,%g,%g,%g,%g,%g,%g) # text={%s}\n",
+	  query[ordinds[0]*2], query[ordinds[0]*2+1],
+	  query[ordinds[1]*2], query[ordinds[1]*2+1],
+	  query[ordinds[2]*2], query[ordinds[2]*2+1],
+	  query[ordinds[3]*2], query[ordinds[3]*2+1], "query");
+
+  /* Close the file. */
+  if(fclose(regfile)==EOF)
+    error(EXIT_FAILURE, errno, "%s", regname);
+}
 
 
 
@@ -1080,6 +1129,7 @@ void
 match_quad_to_ref(struct params *p, struct matched_points *matched,
 		  size_t *abcd, double *geohash, uint16_t rel_b)
 {
+  int debug=1;
   size_t qindex;
   double least_dist;
 
@@ -1087,10 +1137,6 @@ match_quad_to_ref(struct params *p, struct matched_points *matched,
   double *x=p->x->array;
   double *y=p->y->array;
   double *ra=p->ra->array;
-  double *cx=p->cx->array;
-  double *cy=p->cy->array;
-  double *dx=p->dx->array;
-  double *dy=p->dy->array;
   double *dec=p->dec->array;
   uint32_t *a_ind=p->a_ind->array;
   uint32_t *b_ind=p->b_ind->array;
@@ -1100,31 +1146,39 @@ match_quad_to_ref(struct params *p, struct matched_points *matched,
 
   /* Find the matching quad from the reference catalog. */
   qindex=gal_kdtree_nearest_neighbour(p->cx, p->left, p->kdtree_root,
-				       geohash, &least_dist);
+				      geohash, &least_dist);
 
   /* For a check: */
-  printf("------------------------------------------------\n");
-  printf("qindex: %zu (dist: %g)\n", qindex, least_dist);
-  printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
-  printf("------------------------------------------------\n");
-  printf("%-10s%-30u%u\n", "rel_b", rel_brightness[qindex], rel_b);
-  printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Cx,Cy", cx[qindex], cy[qindex],
-	 geohash[0], geohash[1]);
-  printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Dx,Dy", dx[qindex], dy[qindex],
-	 geohash[1], geohash[2]);
-  printf("\n");
-  printf("%-10s%-10g%-20g%-10g%g\n", "A", ra[a_ind[qindex]], dec[a_ind[qindex]],
-	 x[abcd[0]], y[abcd[0]]);
-  printf("%-10s%-10g%-20g%-10g%g\n", "B", ra[b_ind[qindex]], dec[b_ind[qindex]],
-	 x[abcd[1]], y[abcd[1]]);
-  printf("%-10s%-10g%-20g%-10g%g\n", "C", ra[c_ind[qindex]], dec[c_ind[qindex]],
-	 x[abcd[2]], y[abcd[2]]);
-  printf("%-10s%-10g%-20g%-10g%g\n", "D", ra[d_ind[qindex]], dec[d_ind[qindex]],
-	 x[abcd[3]], y[abcd[3]]);
+  if(debug)
+    {
+      double *cx=p->cx->array;
+      double *cy=p->cy->array;
+      double *dx=p->dx->array;
+      double *dy=p->dy->array;
+      printf("------------------------------------------------\n");
+      printf("qindex: %zu (dist: %g)\n", qindex, least_dist);
+      printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
+      printf("------------------------------------------------\n");
+      printf("%-10s%-30u%u\n", "rel_b", rel_brightness[qindex], rel_b);
+      printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Cx,Cy", cx[qindex],
+	     cy[qindex], geohash[0], geohash[1]);
+      printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Dx,Dy", dx[qindex],
+	     dy[qindex], geohash[2], geohash[3]);
+      printf("\n");
+      printf("%-10s%-10g%-20g%-10g%g\n", "A", ra[a_ind[qindex]],
+	     dec[a_ind[qindex]], x[abcd[0]], y[abcd[0]]);
+      printf("%-10s%-10g%-20g%-10g%g\n", "B", ra[b_ind[qindex]],
+	     dec[b_ind[qindex]], x[abcd[1]], y[abcd[1]]);
+      printf("%-10s%-10g%-20g%-10g%g\n", "C", ra[c_ind[qindex]],
+	     dec[c_ind[qindex]], x[abcd[2]], y[abcd[2]]);
+      printf("%-10s%-10g%-20g%-10g%g\n", "D", ra[d_ind[qindex]],
+	     dec[d_ind[qindex]], x[abcd[3]], y[abcd[3]]);
+    }
 
-
-  printf("\n...%s...\n", __func__);
-  exit(0);
+  /* If the relative brightness matches. */
+  if(rel_brightness[qindex] == rel_b && least_dist<0.01)
+    match_quads_as_ds9_reg_matched(ra, dec, x, y, a_ind, b_ind,
+				   c_ind, d_ind, abcd, qindex);
 }
 
 
@@ -1200,7 +1254,8 @@ make_quads_worker(void *in_prm)
       /* If necessary (regfile isn't NULL), add a line for this
 	 polygon into the ds9 region file. */
       if(regfile)
-	match_quad_as_ds9_reg(regfile, c1, c2, qindex, good_vertices);
+	match_quad_as_ds9_reg(regfile, c1, c2, qindex, good_vertices,
+			      p->c1==p->ra);
 
       /* Identify which vertices are A, B, C and D (based on special
 	 geometric definitions described above) and calculate the
@@ -1381,12 +1436,10 @@ high_level_reference_write(struct params *p, char *in_filename,
 
 static void
 highlevel_reference(char *reference_name, char *kdtree_name,
-		    char *ds9regprefix, float magnitude_error,
-		    size_t numthreads)
+		    char *ds9regprefix, float max_mag_diff,
+		    float magnitude_error, size_t numthreads,
+		    size_t x_numbin, size_t y_numbin, size_t num_in_gpixel)
 {
-  float max_mag_diff=2;
-  size_t x_numbin=5, y_numbin=5, num_in_gpixel=50;
-
   /* Internal. */
   struct params p={0};
   struct grid in_grid={0};
@@ -1592,15 +1645,17 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
 
 static void
 highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
-		char *output_name, float magnitude_error, size_t numthreads)
+		char *ds9regprefix, char *output_name,
+		float max_mag_diff, float magnitude_error,
+		size_t numthreads, size_t x_numbin, size_t y_numbin,
+		size_t num_in_gpixel)
 {
   struct params p={0};
-  float max_mag_diff=2;
   struct grid in_grid={0};
-  size_t x_numbin=5, y_numbin=5, num_in_gpixel=10;
   size_t num_quads=x_numbin*y_numbin*num_in_gpixel;
 
   /* Read and do sanity checks. */
+  p.ds9regprefix=ds9regprefix;
   p.magnitude_error=magnitude_error;
   match_prepare(&p, reference_name, kdtree_name, query_name, numthreads);
 
@@ -1647,7 +1702,8 @@ main()
   int buildref=1;
 
   size_t numthreads=1;
-  float magnitude_error=0.1;
+  float max_mag_diff=2, magnitude_error=0.1;
+  size_t x_numbin=2, y_numbin=2, num_in_gpixel=1;
 
   /* Reference catalog names. */
   char *ds9regprefix="./build/quads";
@@ -1655,17 +1711,19 @@ main()
   char *reference_name="./input/reference.fits";
 
   /* Query catalog name. */
-  char *query_name="./input/query.fits";
+  char *query_name="./input/query2.fits";
   char *output_name = "./build/matched-out.fits";
 
   /* Process reference catalog. */
   if(buildref)
     highlevel_reference(reference_name, kdtree_name, ds9regprefix,
-			magnitude_error, numthreads);
+			max_mag_diff, magnitude_error, numthreads,
+			x_numbin, y_numbin, num_in_gpixel);
 
   /* Find quads on the query image and match them. */
-  highlevel_query(reference_name, kdtree_name, query_name,
-		  output_name, magnitude_error, numthreads);
+  highlevel_query(reference_name, kdtree_name, query_name, ds9regprefix,
+		  output_name, max_mag_diff, magnitude_error, numthreads,
+		  x_numbin, y_numbin, num_in_gpixel);
 
   /* Finish the program successfully. */
   return EXIT_SUCCESS;
