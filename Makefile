@@ -2,7 +2,7 @@
 
 CC := gcc
 CC := ${CC}
-CFLAGS := -Wall -O0 -g -Wno-unused-function
+CFLAGS := -Wall -O0 -g -Wno-unused-function -Wno-unused-variable -Wno-unused-but-set-variable
 INCLUDES := -I/usr/local/include
 LIBS := /usr/local/lib/libgnuastro.a\
 	-lgit2 -ltiff -llzma -ljpeg -L/usr/local/lib -lwcs -lcfitsio -lz \
