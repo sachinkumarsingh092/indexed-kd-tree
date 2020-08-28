@@ -18,6 +18,7 @@ struct kdtree_params
   size_t ndim;
   size_t *input_row;
   gal_data_t **coords;
+  double *range_per_dim;
   uint32_t *left, *right;
   gal_data_t *left_col, *right_col;
 };
@@ -232,7 +233,6 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
   gal_data_t *tmp;
   p->ndim=gal_list_data_number(coords_raw);
 
-
   /* Allocate the coordinate array. */
   errno=0;
   p->coords=malloc(p->ndim*sizeof(**(p->coords)));
@@ -247,14 +247,15 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
       if(tmp->type == GAL_TYPE_FLOAT64)
       	p->coords[i]=tmp;
       else
-	      p->coords[i]=gal_data_copy_to_new_type (tmp, GAL_TYPE_FLOAT64);
+	p->coords[i]=gal_data_copy_to_new_type (tmp, GAL_TYPE_FLOAT64);
 
       /* Go to the next column list. */
       tmp=tmp->next;
     }
 
   /* If the 'left_col' is already defined, then we just need to do
-     some sanity checks. */
+     some sanity checks and to find the minimum and maximum values
+     along each dimension. */
   if(p->left_col)
     {
       /* Make sure there is more than one column. */
@@ -291,16 +292,16 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
     {
       /* Allocate and initialise the kd-tree input_row. */
       p->input_row=gal_pointer_allocate(GAL_TYPE_SIZE_T, coords_raw->size, 0,
-                                   __func__, "p->input_row");
+					__func__, "p->input_row");
       for(i=0; i<coords_raw->size; ++i)	p->input_row[i]=i;
 
       /* Allocate output and initialize them. */
       p->left_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-              coords_raw->minmapsize, coords_raw->quietmmap, "left",
-              "index", "index of left subtree in the kd-tree");
+				 coords_raw->minmapsize, coords_raw->quietmmap, "left",
+				 "index", "index of left subtree in the kd-tree");
       p->right_col=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, coords_raw->dsize, NULL, 0,
-              coords_raw->minmapsize, coords_raw->quietmmap, "right",
-              "index", "index of right subtree in the kd-tree");
+				  coords_raw->minmapsize, coords_raw->quietmmap, "right",
+				  "index", "index of right subtree in the kd-tree");
 
       /* Fill the elements of the params structure. */
       p->left_col->next=p->right_col;
@@ -311,7 +312,6 @@ kdtree_prepare(struct kdtree_params *p, gal_data_t *coords_raw)
       for(i=0;i<coords_raw->size;++i)
         { p->left[i]=p->right[i]=GAL_BLANK_UINT32; }
     }
-
 }
 
 
@@ -381,16 +381,16 @@ gal_kdtree_create(gal_data_t *coords_raw, size_t *root)
 
 
 
-/* Return the distance between 2 given nodes.
-   This distance is equivalent to the radius of
-   the hypersphere having node1 as the center.
+/* Return the distance between 2 given nodes.  This distance is
+   equivalent to the radius of the hypersphere having node1 as the
+   center.
 
    Return:
    Radial distace from given point to the node.
 */
 static double
 kdtree_distance_find(struct kdtree_params *p, size_t node,
-		                 double *point)
+		     double *point)
 {
   size_t i;
   double *carr;
@@ -426,12 +426,9 @@ kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
   /* If no subtree present, don't search further. */
   if(node_current==GAL_BLANK_UINT32) return;
 
-  /* The distance between search point to the current node.*/
+  /* The distance between search point to the current node in all
+     dimensions. */
   d = kdtree_distance_find(p, node_current, point);
-
-  /* Distance between the splitting coordinate of the search
-     point and current node. */
-  dx = coordinates[node_current]-point[axis];
 
   /* Check if the current node is nearer than the previous
      nearest node. */
@@ -441,13 +438,20 @@ kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
       *out_nn = node_current;
     }
 
-  // printf("%s: d= %f, least_dis=%f\n", __func__, d, *least_dist);
+  /* For a check.
+  printf("%s: d= %f, least_dis=%f\n", __func__, d, *least_dist);
+  */
 
   /* If exact match found(least distance 0), return it. */
   if(*least_dist==0.0f) return;
 
-  // printf("\n%s: p->left[node_current] = %u, p->right[node_current]=%u\n",
-  //        __func__, p->left[node_current], p->right[node_current]);
+  /* For a check.
+  printf("\n%s: p->left[node_current] = %u, p->right[node_current]=%u\n",
+         __func__, p->left[node_current], p->right[node_current]);
+  */
+
+  /* Distance in current dimension. */
+  dx = coordinates[node_current]-point[axis];
 
   /* Recursively search in subtrees. */
   kdtree_nearest_neighbour(p, dx > 0
@@ -455,15 +459,12 @@ kdtree_nearest_neighbour(struct kdtree_params *p, uint32_t node_current,
                               : p->right[node_current],
                            point, least_dist, out_nn, depth+1);
 
-
-
-  /* Since the hyperplanes are all axis-aligned, to check
-     if there is a node in other branch that is nearer to the
-     search node is done by a simple comparison to see whether the
-     distance between the splitting coordinate of the search
-     point and current node is lesser(i.e on same side of hyperplane)
-     than the distance (overall coordinates) from the search point to
-     the current nearest. */
+  /* Since the hyperplanes are all axis-aligned, to check if there is
+     a node in other branch that is nearer to the search node is done
+     by a simple comparison to see whether the distance between the
+     splitting coordinate of the search point and current node is
+     lesser(i.e on same side of hyperplane) than the distance (overall
+     coordinates) from the search point to the current nearest. */
   dx2 = dx*dx;
   if(dx2 >= *least_dist) return;
 
@@ -523,6 +524,7 @@ int main()
 
   size_t root;
   gal_data_t *output;
+
   /* Read the input table. */
   gal_data_t *coords=gal_table_read (inputname, "1",
 				     NULL, NULL, GAL_TABLE_SEARCH_NAME,
