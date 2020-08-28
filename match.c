@@ -621,7 +621,11 @@ select_vertices(float *mag_arr, float magnitude_error, size_t ngood,
 
 
 
-
+/* Allocate all the necessary columns for information on all the quads
+   build from this bright star (which is shared in all of
+   them). Within each thread, at every moment we will be filling the
+   quad information on the quads from one bright star. So to simplify
+   things, set the pointer arrays here. */
 void
 quads_allocate_for_thread(struct params_on_thread *p_th,
 			  size_t refindinthread, size_t nquads)
@@ -630,30 +634,8 @@ quads_allocate_for_thread(struct params_on_thread *p_th,
   int quietmmap=p->ra->quietmmap;
   size_t minmapsize=p->ra->minmapsize;
 
-  /* Allocate all the necessary columns for information on all the
-     quads build from this bright star (which is shared in all of
-     them). */
-  p_th->th_bm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_BMFRAC",
-		"frac", "(mag(B)-mag(A))/mag(A)");
-  p_th->th_cm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CMFRAC",
-		"frac", "(mag(C)-mag(A))/mag(A)");
-  p_th->th_dm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DMFRAC",
-		"frac", "(mag(D)-mag(A))/mag(A)");
-  p_th->th_cx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-	        1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CX",
-		"frac", "Cx on relative coordinate.");
-  p_th->th_cy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-	        1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CY",
-	        "frac", "Cy on relative coordinate.");
-  p_th->th_dx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-	        1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DX",
-		"frac", "Dx on relative coordinate.");
-  p_th->th_dy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DY",
-		"frac", "Dy on relative coordinate.");
+  /* We need the indexs columns for both the references catalog and
+     the query catalog. */
   p_th->th_a_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
 		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_A_IND",
 	        "frac", "Index of point A in input.");
@@ -666,21 +648,45 @@ quads_allocate_for_thread(struct params_on_thread *p_th,
   p_th->th_d_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
 		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_D_IND",
 		"frac", "Index of point D in input.");
+  p_th->th_a_ind = p_th->th_a_ind_d[ refindinthread ]->array;
+  p_th->th_b_ind = p_th->th_b_ind_d[ refindinthread ]->array;
+  p_th->th_c_ind = p_th->th_c_ind_d[ refindinthread ]->array;
+  p_th->th_d_ind = p_th->th_d_ind_d[ refindinthread ]->array;
 
-  /* Within each thread, at every moment we will be filling the quad
-     information on the quads from one bright star. So to simplify
-     things, set the pointer arrays here. */
-  p_th->th_bm    = p_th->th_bm_d   [refindinthread]->array;
-  p_th->th_cm    = p_th->th_cm_d   [refindinthread]->array;
-  p_th->th_dm    = p_th->th_dm_d   [refindinthread]->array;
-  p_th->th_cx    = p_th->th_cx_d   [refindinthread]->array;
-  p_th->th_cy    = p_th->th_cy_d   [refindinthread]->array;
-  p_th->th_dx    = p_th->th_dx_d   [refindinthread]->array;
-  p_th->th_dy    = p_th->th_dy_d   [refindinthread]->array;
-  p_th->th_a_ind = p_th->th_a_ind_d[refindinthread]->array;
-  p_th->th_b_ind = p_th->th_b_ind_d[refindinthread]->array;
-  p_th->th_c_ind = p_th->th_c_ind_d[refindinthread]->array;
-  p_th->th_d_ind = p_th->th_d_ind_d[refindinthread]->array;
+
+  /* The rest of the columns are only necessary for the reference
+     catalog. */
+  if(p->c1==p->ra)
+    {
+      p_th->th_bm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_BMFRAC",
+		      "frac", "(mag(B)-mag(A))/mag(A)");
+      p_th->th_cm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CMFRAC",
+		      "frac", "(mag(C)-mag(A))/mag(A)");
+      p_th->th_dm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DMFRAC",
+		      "frac", "(mag(D)-mag(A))/mag(A)");
+      p_th->th_cx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CX",
+		      "frac", "Cx on relative coordinate.");
+      p_th->th_cy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CY",
+		      "frac", "Cy on relative coordinate.");
+      p_th->th_dx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DX",
+		      "frac", "Dx on relative coordinate.");
+      p_th->th_dy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
+		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DY",
+		      "frac", "Dy on relative coordinate.");
+      p_th->th_bm = p_th->th_bm_d [ refindinthread ]->array;
+      p_th->th_cm = p_th->th_cm_d [ refindinthread ]->array;
+      p_th->th_dm = p_th->th_dm_d [ refindinthread ]->array;
+      p_th->th_cx = p_th->th_cx_d [ refindinthread ]->array;
+      p_th->th_cy = p_th->th_cy_d [ refindinthread ]->array;
+      p_th->th_dx = p_th->th_dx_d [ refindinthread ]->array;
+      p_th->th_dy = p_th->th_dy_d [ refindinthread ]->array;
+    }
 }
 
 
@@ -862,7 +868,7 @@ find_angle_aob(double *a, double *o, double *b)
    second, point C is the third and point D is the fourth. */
 static void
 hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
-	       double *geohash)
+	       double *hash)
 {
   size_t i, j, tmpind;
   int perm_set[4][4]={0};
@@ -944,7 +950,7 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
       printf("\nThe angle between C0D and C1D are equal!"
 	     "\n .... DISCARDING QUAD ...\n");
       */
-      geohash[0]=geohash[1]=geohash[2]=geohash[3]=NAN;
+      hash[0]=hash[1]=hash[2]=hash[3]=NAN;
       vertices[0]=vertices[1]=vertices[2]=vertices[3]=GAL_BLANK_SIZE_T;
       return;
     }
@@ -979,7 +985,7 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
       /* To help in debugging. */
       printf("\nThe angle between A0B and A1B are equal!\n"
 	     " .... DISCARDING QUAD ...\n");
-      geohash[0]=geohash[1]=geohash[2]=geohash[3]=NAN;
+      hash[0]=hash[1]=hash[2]=hash[3]=NAN;
       vertices[0]=vertices[1]=vertices[2]=vertices[3]=GAL_BLANK_SIZE_T;
       return;
     }
@@ -1011,14 +1017,14 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
      we need to scale C and D to be in a coordinate system where A is
      on (0,0) and B is on (1,1). Infact the Cx, Cy, Dx, Dy values are
      the ultimate hashes that we want. */
-  geohash[0]=( c[0]-a[0] )/( b[0]-a[0] );
-  geohash[1]=( c[1]-a[1] )/( b[1]-a[1] );
-  geohash[2]=( d[0]-a[0] )/( b[0]-a[0] );
-  geohash[3]=( d[1]-a[1] )/( b[1]-a[1] );
+  hash[0]=( c[0]-a[0] )/( b[0]-a[0] );
+  hash[1]=( c[1]-a[1] )/( b[1]-a[1] );
+  hash[2]=( d[0]-a[0] )/( b[0]-a[0] );
+  hash[3]=( d[1]-a[1] )/( b[1]-a[1] );
 
   /* For a check.
-  printf("Cx/Cy: %g, %g\n", geohash[0], geohash[1]);
-  printf("Dx/Dy: %g, %g\n", geohash[2], geohash[3]);
+  printf("Cx/Cy: %g, %g\n", hash[0], hash[1]);
+  printf("Dx/Dy: %g, %g\n", hash[2], hash[3]);
   */
 }
 
@@ -1180,6 +1186,24 @@ hashs_calculate(struct params_on_thread *p_th, size_t refind, size_t qind,
       p_th->th_dx[qind] = hash[2];      p_th->th_dm[qind] = hash[6];
       p_th->th_dy[qind] = hash[3];
     }
+  else
+    {
+      /* Call the matching function... */
+    }
+}
+
+
+
+
+
+static gal_data_t *
+gal_data_array_ptr_append_no_blank(gal_data_t **dataarr, size_t size)
+{
+  gal_data_t *out=NULL;
+
+  printf("\n... %s ...\n", __func__);
+  exit(0);
+  return out;
 }
 
 
@@ -1201,17 +1225,22 @@ make_quads_worker(void *in_prm)
   char regname[100];
   FILE *regfile=NULL;
   int make_ds9_reg=1;
-  size_t i, j, refind, refindinthread, starnum=0;
+  size_t i, j, refind, starnum=0;
 
-  /* Initialize the thread-specific parameters. If we are working on
-     the reference image, we need to allocate space for to keep the
-     information for the quads found here. We then count how many
-     stars have been given to this thread, and allocate the necessary
-     'gal_data_t **' (to keep all the quads for each star). */
+  /* Initialize the thread-specific parameters. We need to allocate
+     space for to keep the information for the quads found so first
+     count how many stars have been given to this thread, then
+     allocate the necessary 'gal_data_t **' (to keep all the quads for
+     each star). Note that for the query catalog, we don't need to
+     store the hashes, only the vertice indexs (temporarily). */
   p_th.p=p;
+  for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i) ++starnum;
+  p_th.th_a_ind_d = gal_data_array_ptr_calloc(starnum);
+  p_th.th_b_ind_d = gal_data_array_ptr_calloc(starnum);
+  p_th.th_c_ind_d = gal_data_array_ptr_calloc(starnum);
+  p_th.th_d_ind_d = gal_data_array_ptr_calloc(starnum);
   if(p->c1==p->ra)
     {
-      for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i) ++starnum;
       p_th.th_cx_d    = gal_data_array_ptr_calloc(starnum);
       p_th.th_cy_d    = gal_data_array_ptr_calloc(starnum);
       p_th.th_dx_d    = gal_data_array_ptr_calloc(starnum);
@@ -1219,10 +1248,6 @@ make_quads_worker(void *in_prm)
       p_th.th_bm_d    = gal_data_array_ptr_calloc(starnum);
       p_th.th_cm_d    = gal_data_array_ptr_calloc(starnum);
       p_th.th_dm_d    = gal_data_array_ptr_calloc(starnum);
-      p_th.th_a_ind_d = gal_data_array_ptr_calloc(starnum);
-      p_th.th_b_ind_d = gal_data_array_ptr_calloc(starnum);
-      p_th.th_c_ind_d = gal_data_array_ptr_calloc(starnum);
-      p_th.th_d_ind_d = gal_data_array_ptr_calloc(starnum);
     }
 
   /* Prepare for visualization of the quads as a ds9 region file on an
@@ -1238,9 +1263,7 @@ make_quads_worker(void *in_prm)
      thread. */
   for(i=0; tprm->indexs[i] != GAL_BLANK_SIZE_T; ++i)
     {
-      /* Extract the input catalog index of this reference star and to
-	 help in readability, set 'i' to 'refindinthread'. */
-      refindinthread = i;
+      /* Extract the input catalog index of this reference star. */
       refind = p->brightest_star_id[ tprm->indexs[i] ];
 
       /**************FOR TESTS*******************
@@ -1249,22 +1272,48 @@ make_quads_worker(void *in_prm)
 
       /* Based on this bright star, find all the possible quad
 	 vertices and allocate the necessary datasets.  */
-      quads_vertices_find(&p_th, refind, refindinthread);
+      quads_vertices_find(&p_th, refind, i);
 
       /* If atleast one quad could be found, then calculate the hashes
 	 and match them if necessary. */
-      if(p_th.th_a_ind_d[refindinthread])
-	for(j=0; j<p_th.th_a_ind_d[refindinthread]->size; ++j)
-	  hashs_calculate(&p_th, refind, j, refindinthread, regfile);
+      if(p_th.th_a_ind_d[ i ])
+	for(j=0; j<p_th.th_a_ind_d[ i ]->size; ++j)
+	  hashs_calculate(&p_th, refind, j, i, regfile);
+
+      /* If we are working on the query catalog, free the vertice
+	 index columns for this star (we don't need them any more). */
+      if(p->c1==p->x)
+	{
+	  gal_data_free(p_th.th_a_ind_d[ i ]);  p_th.th_a_ind_d[ i ]=NULL;
+	  gal_data_free(p_th.th_b_ind_d[ i ]);  p_th.th_b_ind_d[ i ]=NULL;
+	  gal_data_free(p_th.th_c_ind_d[ i ]);  p_th.th_c_ind_d[ i ]=NULL;
+	  gal_data_free(p_th.th_d_ind_d[ i ]);  p_th.th_d_ind_d[ i ]=NULL;
+	}
     }
 
-  /**********************************************************/
-  /**********************************************************/
-  /**********************************************************/
-  /*      Merge all non-NaN star quads into one table. */
-  /**********************************************************/
-  /**********************************************************/
-  /**********************************************************/
+  /* Merge separate quads for each bright star in this thread into one
+     into one column, while removing the blanks. */
+  if(p->c1==p->ra)
+    {
+      p->cx_th[tprm->id]=
+	gal_data_array_ptr_append_no_blank(p_th.th_cx_d, starnum);
+    }
+
+  /* Clean up. */
+  gal_data_array_ptr_free(p_th.th_a_ind_d, starnum, 1);
+  gal_data_array_ptr_free(p_th.th_b_ind_d, starnum, 1);
+  gal_data_array_ptr_free(p_th.th_c_ind_d, starnum, 1);
+  gal_data_array_ptr_free(p_th.th_d_ind_d, starnum, 1);
+  if(p->c1==p->ra)
+    {
+      gal_data_array_ptr_free(p_th.th_cx_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_cy_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_dx_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_dy_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_bm_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_cm_d, starnum, 1);
+      gal_data_array_ptr_free(p_th.th_dm_d, starnum, 1);
+    }
 
   /* Close the region file (if it was created). */
   if(regfile)
