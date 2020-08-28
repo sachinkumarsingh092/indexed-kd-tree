@@ -91,7 +91,7 @@ struct params
   /* Reference table quad information. */
   size_t kdtree_root;
   gal_data_t *left, *right;
-  gal_data_t *rel_brightness;
+  gal_data_t *bm, *cm, *dm;
   gal_data_t *cx, *cy, *dx, *dy;
   gal_data_t *a_ind, *b_ind, *c_ind, *d_ind;
 
@@ -131,6 +131,8 @@ struct params_on_thread
   double *th_bm, *th_cm, *th_dm, *th_cx, *th_cy, *th_dx, *th_dy;
   uint32_t *th_a_ind, *th_b_ind, *th_c_ind, *th_d_ind;
 
+  /* For the matching. */
+  struct matched_points *matched;
 };
 
 
@@ -236,12 +238,13 @@ gal_polygon_to_ds9reg(char *filename, size_t num_polygons, double *polygon,
 
 static FILE *
 match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id,
-			   int r1q0)
+			   int r1q0m2)
 {
   FILE *regfile;
 
   /* Set the filename (with thread number). */
-  sprintf(regname, "%s-%zu-%s.reg", regprefix, id, r1q0?"ref":"query");
+  sprintf(regname, "%s-%zu-%s.reg", regprefix, id,
+	  r1q0m2?(r1q0m2==1?"ref":"match"):"query");
 
   /* Open the file. */
   errno=0;
@@ -250,7 +253,7 @@ match_quad_as_ds9_reg_init(char *regname, char *regprefix, size_t id,
 
   /* Write basic information. */
   fprintf(regfile, "# Region file format: DS9 version 4.1\n");
-  fprintf(regfile, "%s\n", r1q0?"fk5":"image");
+  fprintf(regfile, "%s\n", r1q0m2?"fk5":"image");
 
   /* Return the file pointer. */
   return regfile;
@@ -288,36 +291,34 @@ match_quad_as_ds9_reg(FILE *regfile, size_t refind, size_t quadind,
 
 
 static void
-match_quads_as_ds9_reg_matched(double *ra, double *dec, double *x, double *y,
-			       uint32_t *a_ind, uint32_t *b_ind,
-			       uint32_t *c_ind, uint32_t *d_ind,
-			       size_t *abcd, size_t qindex)
+match_quads_as_ds9_reg_matched(size_t refqid, double *ra, double *dec,
+			       uint32_t *rfa, uint32_t *rfb, uint32_t *rfc,
+			       uint32_t *rfd, size_t qryqid, double *x,
+			       double *y, uint32_t *qa, uint32_t *qb,
+			       uint32_t *qc, uint32_t *qd, char *ds9regprefix)
 {
   FILE *regfile;
   size_t ordinds[8];
   char regname[1000];
   static int counter=0;
-  char regprefix[]="./build/matched";
-  double ref[8]={
-    ra[a_ind[qindex]], dec[a_ind[qindex]],
-    ra[b_ind[qindex]], dec[b_ind[qindex]],
-    ra[c_ind[qindex]], dec[c_ind[qindex]],
-    ra[d_ind[qindex]], dec[d_ind[qindex]],
-  };
-  double query[8]={
-    x[abcd[0]], y[abcd[0]],          x[abcd[1]], y[abcd[1]],
-    x[abcd[2]], y[abcd[2]],          x[abcd[3]], y[abcd[3]],
-  };
+  double ref[8]={ ra[rfa[refqid]], dec[rfa[refqid]],
+                  ra[rfb[refqid]], dec[rfb[refqid]],
+                  ra[rfc[refqid]], dec[rfc[refqid]],
+                  ra[rfd[refqid]], dec[rfd[refqid]] };
+  double query[8]={ x[qa[qryqid]], y[qa[qryqid]],
+                    x[qb[qryqid]], y[qb[qryqid]],
+                    x[qc[qryqid]], y[qc[qryqid]],
+                    x[qd[qryqid]], y[qd[qryqid]] };
 
-  /* Initialize the file and and put the 'fk5' marker (for the
-     reference catalog) and draw the reference quad. */
-  regfile=match_quad_as_ds9_reg_init(regname, regprefix, counter++, 1);
+  /* Initialize the file and put the 'fk5' marker (for the reference
+     catalog) and draw the reference quad. */
+  regfile=match_quad_as_ds9_reg_init(regname, ds9regprefix, counter++, 2);
   gal_polygon_vertices_sort(ref, 4, ordinds);
   fprintf(regfile, "polygon(%g,%g,%g,%g,%g,%g,%g,%g) # text={%zu-%s}\n",
 	  ref[ordinds[0]*2], ref[ordinds[0]*2+1],
 	  ref[ordinds[1]*2], ref[ordinds[1]*2+1],
 	  ref[ordinds[2]*2], ref[ordinds[2]*2+1],
-	  ref[ordinds[3]*2], ref[ordinds[3]*2+1], qindex, "r");
+	  ref[ordinds[3]*2], ref[ordinds[3]*2+1], refqid, "r");
 
   /* Add the query quad. */
   fprintf(regfile, "image\n");
@@ -444,56 +445,74 @@ grid_findindex(double X, double Y, struct grid *grid)
    as a starting point for constructing quads. */
 static size_t *
 find_brightest_stars(gal_data_t *x_data, gal_data_t *y_data,
-                     gal_data_t *mag_data, size_t num_quads,
+                     gal_data_t *mag_data, size_t *num_quads,
                      struct grid *in_grid, size_t num_in_gpixel)
 {
   size_t i, g;
   float *mag=mag_data->array;
-  size_t *brightest_star_id, *bsi_counter;
   double *x=x_data->array, *y=y_data->array;
-  size_t *sorted_id, npoints=mag_data->size;
+  size_t *brightest_star_id, *bsi_counter=NULL;
+  size_t *sorted_id=NULL, npoints=mag_data->size;
 
-  /* Allocate the necessary arrays. */
-  sorted_id=gal_pointer_allocate (GAL_TYPE_SIZE_T, npoints, 0,
-                                  __func__, "sorted_id");
-  bsi_counter=gal_pointer_allocate(GAL_TYPE_SIZE_T, in_grid->size, 1,
-                                   __func__, "bsi_counter");
-  brightest_star_id=gal_pointer_allocate(GAL_TYPE_SIZE_T, num_quads, 0,
+  /* If the number of points is less than the (theoretical) number of
+     quads, then just use all the stars (so we don't need to sort). */
+  if(npoints > *num_quads)
+    {
+      sorted_id=gal_pointer_allocate (GAL_TYPE_SIZE_T, npoints, 0,
+				      __func__, "sorted_id");
+      bsi_counter=gal_pointer_allocate(GAL_TYPE_SIZE_T, in_grid->size,
+				       1, __func__, "bsi_counter");
+    }
+  else *num_quads=npoints;
+
+  /* Allocate the final output. */
+  brightest_star_id=gal_pointer_allocate(GAL_TYPE_SIZE_T, *num_quads, 0,
                                          __func__, "brightest_star_id");
 
-  /* Initialise output and sorted_id arrays. */
-  for(i=0;i<npoints; ++i) sorted_id[i]=i;
-  for(i=0;i<num_quads;++i) brightest_star_id[i]=GAL_BLANK_SIZE_T;
-
-  /* Set magnitude column as a reference to sort stars ID array in
-     incresing order (note that the "magnitude" in astronomy is the
-     inverse of brightness: as magnitude increases, the object becomes
-     fainter).  */
-  gal_qsort_index_single=mag;
-  qsort(sorted_id, npoints, sizeof(size_t),
-        gal_qsort_index_single_float32_i);
-
-  /* Parse through the 'sorted_id' array (where the brightest star is
-     the first), and put each star in the respective grid element's
-     set of stars, until the capacity is reached. */
-  for (i=0;i<npoints;++i)
+  /* If it was necessary to sort the points, do it. */
+  if( sorted_id )
     {
-      /* Index of the grid box corresponding to particular RA and DEC
-         values in the sorted order. */
-      g = grid_findindex(x[sorted_id[i]], y[sorted_id[i]], in_grid);
+      /* Initialise output and sorted_id arrays. */
+      for(i=0;i<npoints; ++i) sorted_id[i]=i;
+      for(i=0;i<*num_quads;++i) brightest_star_id[i]=GAL_BLANK_SIZE_T;
 
-      /* If there are less number of star ids for the box than
-         required, find more stars in that particular box. */
-      if (bsi_counter[g] < num_in_gpixel)
-        {
-          brightest_star_id[g*num_in_gpixel+bsi_counter[g]]=sorted_id[i];
-          bsi_counter[g]++;
-        }
+      /* Set magnitude column as a reference to sort stars ID array in
+	 incresing order (note that the "magnitude" in astronomy is
+	 the inverse of brightness: as magnitude increases, the object
+	 becomes fainter).  */
+      gal_qsort_index_single=mag;
+      qsort(sorted_id, npoints, sizeof(size_t),
+	    gal_qsort_index_single_float32_i);
+
+      /* Parse through the 'sorted_id' array (where the brightest star
+	 is the first), and put each star in the respective grid
+	 element's set of stars, until the capacity is reached. */
+      for (i=0;i<npoints;++i)
+	{
+	  /* Index of the grid box corresponding to particular RA and
+             DEC values in the sorted order. */
+	  g = grid_findindex(x[sorted_id[i]], y[sorted_id[i]], in_grid);
+
+	  /* If there are less number of star ids for the box than
+	     required, find more stars in that particular box. */
+	  if (bsi_counter[g] < num_in_gpixel)
+	    {
+	      brightest_star_id[g*num_in_gpixel+bsi_counter[g]]=
+		sorted_id[i];
+	      bsi_counter[g]++;
+	    }
+	}
+
+      /* Clean and return. */
+      free(sorted_id);
+      free(bsi_counter);
     }
 
-  /* Clean and return. */
-  free(sorted_id);
-  free(bsi_counter);
+  /* No sorting was necessary, just use all the stars. */
+  else
+    for(i=0;i<npoints; ++i) brightest_star_id[i]=i;
+
+  /* Return the  */
   return brightest_star_id;
 }
 
@@ -637,17 +656,17 @@ quads_allocate_for_thread(struct params_on_thread *p_th,
   /* We need the indexs columns for both the references catalog and
      the query catalog. */
   p_th->th_a_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_A_IND",
-	        "frac", "Index of point A in input.");
+		1, &nquads, NULL, 0, minmapsize, quietmmap, "A-index",
+	        "index", "Index of polygon point A in input.");
   p_th->th_b_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_B_IND",
-		"frac", "Index of point B in input.");
+		1, &nquads, NULL, 0, minmapsize, quietmmap, "B-index",
+		"index", "Index of polygon point B in input.");
   p_th->th_c_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
-	        1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_C_IND",
-		"frac", "Index of point C in input.");
+	        1, &nquads, NULL, 0, minmapsize, quietmmap, "C-index",
+		"index", "Index of polygon point C in input.");
   p_th->th_d_ind_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_UINT32,
-		1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_D_IND",
-		"frac", "Index of point D in input.");
+		1, &nquads, NULL, 0, minmapsize, quietmmap, "D-index",
+		"index", "Index of polygon point D in input.");
   p_th->th_a_ind = p_th->th_a_ind_d[ refindinthread ]->array;
   p_th->th_b_ind = p_th->th_b_ind_d[ refindinthread ]->array;
   p_th->th_c_ind = p_th->th_c_ind_d[ refindinthread ]->array;
@@ -659,26 +678,29 @@ quads_allocate_for_thread(struct params_on_thread *p_th,
   if(p->c1==p->ra)
     {
       p_th->th_bm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_BMFRAC",
-		      "frac", "(mag(B)-mag(A))/mag(A)");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "B-mag-frac", "frac",
+		      "Relative mag of B: (mag(B)-mag(A))/mag(A)");
       p_th->th_cm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CMFRAC",
-		      "frac", "(mag(C)-mag(A))/mag(A)");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "C-mag-frac", "frac",
+		      "Relative mag of C: (mag(C)-mag(A))/mag(A)");
       p_th->th_dm_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DMFRAC",
-		      "frac", "(mag(D)-mag(A))/mag(A)");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "D-mag-frac", "frac",
+		      "Relative mag of D: (mag(D)-mag(A))/mag(A)");
       p_th->th_cx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CX",
-		      "frac", "Cx on relative coordinate.");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "Cx", "frac", "C position in scaled dimension 1.");
       p_th->th_cy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_CY",
-		      "frac", "Cy on relative coordinate.");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "Cy", "frac", "C position in scaled dimension 2.");
       p_th->th_dx_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DX",
-		      "frac", "Dx on relative coordinate.");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "Dx", "frac", "D position in scaled dimension 1.");
       p_th->th_dy_d[refindinthread]=gal_data_alloc(NULL, GAL_TYPE_FLOAT64,
-		      1, &nquads, NULL, 0, minmapsize, quietmmap, "THREAD_DY",
-		      "frac", "Dy on relative coordinate.");
+		      1, &nquads, NULL, 0, minmapsize, quietmmap,
+		      "Dy", "frac", "D position in scaled dimension 2.");
       p_th->th_bm = p_th->th_bm_d [ refindinthread ]->array;
       p_th->th_cm = p_th->th_cm_d [ refindinthread ]->array;
       p_th->th_dm = p_th->th_dm_d [ refindinthread ]->array;
@@ -1032,62 +1054,97 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
 
 
 
+/* When a quad can't be used for any reason, we need to set the full
+   row to blank. */
+static void
+hashs_set_row_to_blank(struct params_on_thread *p_th, size_t qind)
+{
+  /* Both on the query and reference catalog we need to set to the
+     vertice indexs to blank. */
+  p_th->th_a_ind[qind]=p_th->th_b_ind[qind]=GAL_BLANK_UINT32;
+  p_th->th_c_ind[qind]=p_th->th_d_ind[qind]=GAL_BLANK_UINT32;
+
+  /* Only for the reference catalog do we need to set to the hash
+     values to blank. */
+  if(p_th->p->c1 == p_th->p->ra)
+    {
+      p_th->th_dy[qind]=NAN;
+      p_th->th_bm[qind]=p_th->th_cm[qind]=p_th->th_dm[qind]=NAN;
+      p_th->th_cx[qind]=p_th->th_cy[qind]=p_th->th_dx[qind]=NAN;
+    }
+}
+
+
+
+
+
 /* A quad has been found over the query catalog, we now want to match
    it with the reference quads and keep the indexs. */
 void
-match_quad_to_ref(struct params *p, struct matched_points *matched,
-		  size_t *abcd, double *geohash, uint16_t rel_b)
+match_quad_to_ref(struct params_on_thread *p_th, double *hash,
+		  size_t qryqid)
 {
-  int debug=0;
-  size_t qindex;
+  size_t refqid;
   double least_dist;
+  struct params *p=p_th->p;
 
   /* For easy reading. */
-  double *x=p->x->array;
-  double *y=p->y->array;
-  double *ra=p->ra->array;
-  double *dec=p->dec->array;
-  uint32_t *a_ind=p->a_ind->array;
-  uint32_t *b_ind=p->b_ind->array;
-  uint32_t *c_ind=p->c_ind->array;
-  uint32_t *d_ind=p->d_ind->array;
-  uint16_t *rel_brightness=p->rel_brightness->array;
+  double   *x=p->x->array;
+  double   *y=p->y->array;
+  double   *ra=p->ra->array;
+  double   *dec=p->dec->array;
+
+  uint32_t *rfa=p->a_ind->array,    *qa=p_th->th_a_ind;
+  uint32_t *rfb=p->b_ind->array,    *qb=p_th->th_b_ind;
+  uint32_t *rfc=p->c_ind->array,    *qc=p_th->th_c_ind;
+  uint32_t *rfd=p->d_ind->array,    *qd=p_th->th_d_ind;
+
 
   /* Find the matching quad from the reference catalog. */
-  qindex=gal_kdtree_nearest_neighbour(p->cx, p->left, p->kdtree_root,
-				      geohash, &least_dist);
+  refqid=gal_kdtree_nearest_neighbour(p->cx, p->left, p->kdtree_root,
+				      hash, &least_dist);
 
-  /* For a check: */
-  if(debug)
-    {
-      double *cx=p->cx->array;
-      double *cy=p->cy->array;
-      double *dx=p->dx->array;
-      double *dy=p->dy->array;
-      printf("------------------------------------------------\n");
-      printf("qindex: %zu (dist: %g)\n", qindex, least_dist);
-      printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
-      printf("------------------------------------------------\n");
-      printf("%-10s%-30u%u\n", "rel_b", rel_brightness[qindex], rel_b);
-      printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Cx,Cy", cx[qindex],
-	     cy[qindex], geohash[0], geohash[1]);
-      printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Dx,Dy", dx[qindex],
-	     dy[qindex], geohash[2], geohash[3]);
-      printf("\n");
-      printf("%-10s%-10g%-20g%-10g%g\n", "A", ra[a_ind[qindex]],
-	     dec[a_ind[qindex]], x[abcd[0]], y[abcd[0]]);
-      printf("%-10s%-10g%-20g%-10g%g\n", "B", ra[b_ind[qindex]],
-	     dec[b_ind[qindex]], x[abcd[1]], y[abcd[1]]);
-      printf("%-10s%-10g%-20g%-10g%g\n", "C", ra[c_ind[qindex]],
-	     dec[c_ind[qindex]], x[abcd[2]], y[abcd[2]]);
-      printf("%-10s%-10g%-20g%-10g%g\n", "D", ra[d_ind[qindex]],
-	     dec[d_ind[qindex]], x[abcd[3]], y[abcd[3]]);
-    }
+  /* For a check:
+  {
+    double *cx=p->cx->array;
+    double *cy=p->cy->array;
+    double *dx=p->dx->array;
+    double *dy=p->dy->array;
+    double *bm=p->bm->array;
+    double *cm=p->cm->array;
+    double *dm=p->dm->array;
+    printf("\n------------------------------------------------\n");
+    printf("ref-q-id: %zu (dist: %g)\n", refqid, least_dist);
+    printf("%-10s%-30s%s\n", "Check", "Reference", "Query");
+    printf("------------------------------------------------\n");
+    printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Cx,Cy", cx[refqid],
+	   cy[refqid], hash[0], hash[1]);
+    printf("%-10s%-10.3f%-20.3f%-10.3f%.3f\n", "Dx,Dy", dx[refqid],
+	   dy[refqid], hash[2], hash[3]);
+    printf("%-10s%-10.3f%-10.3f\n", "Bm", bm[refqid], hash[4]);
+    printf("%-10s%-10.3f%-10.3f\n", "Cm", cm[refqid], hash[5]);
+    printf("%-10s%-10.3f%-10.3f\n", "Dm", dm[refqid], hash[6]);
+    printf("\n");
+    printf("%-10s%-10g%-20g%-10g%g\n", "A", ra[rfa[refqid]],
+	   dec[rfa[refqid]], x[qa[qryqid]], y[qa[qryqid]]);
+    printf("%-10s%-10g%-20g%-10g%g\n", "B", ra[rfb[refqid]],
+	   dec[rfb[refqid]], x[qb[qryqid]], y[qb[qryqid]]);
+    printf("%-10s%-10g%-20g%-10g%g\n", "C", ra[rfc[refqid]],
+	   dec[rfc[refqid]], x[qc[qryqid]], y[qc[qryqid]]);
+    printf("%-10s%-10g%-20g%-10g%g\n", "D", ra[rfd[refqid]],
+	   dec[rfd[refqid]], x[qd[qryqid]], y[qd[qryqid]]);
+  }
+  */
 
   /* If the relative brightness matches. */
-  if(rel_brightness[qindex] == rel_b && least_dist<0.01)
-    match_quads_as_ds9_reg_matched(ra, dec, x, y, a_ind, b_ind,
-				   c_ind, d_ind, abcd, qindex);
+  if(least_dist<0.1)
+    {
+      /* To help in visualization. */
+      printf("leastdist: %f\n", least_dist);
+      match_quads_as_ds9_reg_matched(refqid, ra, dec, rfa, rfb, rfc, rfd,
+				     qryqid, x, y, qa, qb, qc, qd,
+				     p->ds9regprefix);
+    }
 }
 
 
@@ -1113,32 +1170,15 @@ hashs_calculate(struct params_on_thread *p_th, size_t refind, size_t qind,
   /* Check if the four points have sufficiently different magnitudes,
      if not, set all the quad hashes to blank. */
   if( quad_has_good_mags(p->mag->array, vertices, p->magnitude_error) == 0 )
-    {
-      if(p->c1==p->ra)
-	{
-	  p_th->th_dy[qind]=NAN;
-	  p_th->th_bm[qind]=p_th->th_cm[qind]=p_th->th_dm[qind]=NAN;
-	  p_th->th_cx[qind]=p_th->th_cy[qind]=p_th->th_dx[qind]=NAN;
-	}
-      return;
-    }
+    { hashs_set_row_to_blank(p_th, qind); return; }
 
 
   /* Order the vertices based on geometry and calculate the geometric
      hash (first four numbers in 'hash'). If the quad's vertices can't
-     be geometry can't be geometrically distinguished, this function
-     will put NaNs in the respective hash elements. */
+     be geometrically distinguished, this function will put NaNs in
+     the respective hash elements. */
   hash_geometric(p->c1->array, p->c2->array, vertices, hash);
-  if( isnan(hash[0]) )
-    {
-      if(p->c1==p->ra)
-	{
-	  p_th->th_dy[qind]=NAN;
-	  p_th->th_bm[qind]=p_th->th_cm[qind]=p_th->th_dm[qind]=NAN;
-	  p_th->th_cx[qind]=p_th->th_cy[qind]=p_th->th_dx[qind]=NAN;
-	}
-      return;
-    }
+  if( isnan(hash[0]) ) { hashs_set_row_to_blank(p_th, qind); return; }
 
 
   /* Make a ds9 region if requested. */
@@ -1187,9 +1227,7 @@ hashs_calculate(struct params_on_thread *p_th, size_t refind, size_t qind,
       p_th->th_dy[qind] = hash[3];
     }
   else
-    {
-      /* Call the matching function... */
-    }
+    match_quad_to_ref(p_th, hash, qind);
 }
 
 
@@ -1197,12 +1235,79 @@ hashs_calculate(struct params_on_thread *p_th, size_t refind, size_t qind,
 
 
 static gal_data_t *
-gal_data_array_ptr_append_no_blank(gal_data_t **dataarr, size_t size)
+gal_data_array_ptr_append_noblank_inplace(gal_data_t **dataarr, size_t size)
 {
+  void *optr;
+  int quietmmap;
   gal_data_t *out=NULL;
+  char *name, *unit, *comment;
+  size_t i, nout=0, minmapsize;
+  uint8_t type=GAL_TYPE_INVALID;
 
-  printf("\n... %s ...\n", __func__);
-  exit(0);
+  /* Go through the components and use the first one that is not
+     NULL. */
+  for(i=0;i<size;++i)
+    if(dataarr[i])
+      {
+	type=dataarr[i]->type;
+	name=dataarr[i]->name;
+	unit=dataarr[i]->unit;
+	comment=dataarr[i]->comment;
+	quietmmap=dataarr[i]->quietmmap;
+	minmapsize=dataarr[i]->minmapsize;
+	break;
+      }
+
+  /* Get the total number of points in each dataset (if something
+     actually exists for it). */
+  for(i=0;i<size;++i)
+    if( dataarr[i] )
+      {
+	/* Make sure that they all have the same numerical data type
+	   (all are the same type as the first). */
+	if( dataarr[i]->type != type )
+	  error(EXIT_FAILURE, 0, "%s: all inputs must have the same type, "
+		"but the input atleast contains these two different types: "
+		"%s and %s", __func__, gal_type_name(type, 1),
+		gal_type_name(dataarr[i]->type, 1));
+
+	/* Remove all blanks and add the number of non-blank elements to
+	   'out_num'. */
+	gal_blank_remove(dataarr[i]);
+	nout += dataarr[i]->size;
+      }
+
+  /* Only continue if there is actually anything. */
+  if(nout)
+    {
+      /* Allocate the output dataset in the same type. */
+      out=gal_data_alloc(NULL, type, 1, &nout, NULL, 0,
+			 minmapsize, quietmmap, name, unit, comment);
+
+      /* Copy the array element of each dataset into the output array and
+	 return it. */
+      nout=0;
+      for(i=0;i<size;++i)
+	if(dataarr[i])
+	  {
+	    optr=gal_pointer_increment(out->array, nout, type);
+	    memcpy(optr, dataarr[i]->array,
+		   dataarr[i]->size*gal_type_sizeof(type));
+	    nout+=dataarr[i]->size;
+	  }
+
+      /* For a check.
+      {
+	double *oarr=out->array;
+	for(i=0;i<out->size;++i) printf("%zu: %f\n", i, oarr[i]);
+	for(i=0;i<size;++i) printf("partial: %zu\n", dataarr[i]->size);
+	printf("total: %zu\n", out->size);
+      }
+      exit(0);
+      */
+    }
+
+  /* Return the output dataset. */
   return out;
 }
 
@@ -1219,7 +1324,7 @@ make_quads_worker(void *in_prm)
   /* Low-level definitions to be done first. */
   struct gal_threads_params *tprm=(struct gal_threads_params *)in_prm;
   struct params *p=(struct params *)tprm->params;
-  struct params_on_thread p_th;
+  struct params_on_thread p_th={0};
 
   /* Subsequent definitions. */
   char regname[100];
@@ -1281,7 +1386,9 @@ make_quads_worker(void *in_prm)
 	  hashs_calculate(&p_th, refind, j, i, regfile);
 
       /* If we are working on the query catalog, free the vertice
-	 index columns for this star (we don't need them any more). */
+	 index columns for this star (we don't need them any more). We
+	 should set them to NULL, so later, when we delete the whole
+	 'data_array_prt', it won't complain with double-freeing. */
       if(p->c1==p->x)
 	{
 	  gal_data_free(p_th.th_a_ind_d[ i ]);  p_th.th_a_ind_d[ i ]=NULL;
@@ -1291,15 +1398,35 @@ make_quads_worker(void *in_prm)
 	}
     }
 
-  /* Merge separate quads for each bright star in this thread into one
-     into one column, while removing the blanks. */
+  /* Merge the separate quads for each bright star in this thread into
+     one one column, while removing the blanks. */
   if(p->c1==p->ra)
     {
       p->cx_th[tprm->id]=
-	gal_data_array_ptr_append_no_blank(p_th.th_cx_d, starnum);
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_cx_d, starnum);
+      p->cy_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_cy_d, starnum);
+      p->dx_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_dx_d, starnum);
+      p->dy_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_dy_d, starnum);
+      p->bm_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_bm_d, starnum);
+      p->cm_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_cm_d, starnum);
+      p->dm_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_dm_d, starnum);
+      p->a_ind_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_a_ind_d, starnum);
+      p->b_ind_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_b_ind_d, starnum);
+      p->c_ind_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_c_ind_d, starnum);
+      p->d_ind_th[tprm->id]=
+	gal_data_array_ptr_append_noblank_inplace(p_th.th_d_ind_d, starnum);
     }
 
-  /* Clean up. */
+  /* Clean up all the allocated space in this thread. */
   gal_data_array_ptr_free(p_th.th_a_ind_d, starnum, 1);
   gal_data_array_ptr_free(p_th.th_b_ind_d, starnum, 1);
   gal_data_array_ptr_free(p_th.th_c_ind_d, starnum, 1);
@@ -1401,48 +1528,21 @@ prepare_reference(struct params *p, char *reference_name, size_t numthreads)
 
 
 
+/* Merge the results on each thread into one. */
 static void
-prepare_reference_out(struct params *p)
+reference_unite_threads(struct params *p, size_t numthreads)
 {
-  int quitemmap=1;
-  size_t minmapsize=-1;
-
-  /*************************************/
-  size_t num_quads=0;
-  printf("\n... %s ...\n", __func__); exit(0);
-  /*************************************/
-
-  /* Allocate all the necessary columns. */
-  p->cx=gal_data_alloc(NULL, GAL_TYPE_FLOAT64, 1, &num_quads, NULL, 0,
-		       minmapsize, quitemmap, "Cx", "position",
-		       "relative position in matching coordinates");
-  p->cy=gal_data_alloc(NULL, GAL_TYPE_FLOAT64, 1, &num_quads, NULL, 0,
-		       minmapsize, quitemmap, "Cy", "position",
-		       "relative position in matching coordinates");
-  p->dx=gal_data_alloc(NULL, GAL_TYPE_FLOAT64, 1, &num_quads, NULL, 0,
-		       minmapsize, quitemmap, "Dx", "position",
-		       "relative position in matching coordinates");
-  p->dy=gal_data_alloc(NULL, GAL_TYPE_FLOAT64, 1, &num_quads, NULL, 0,
-		       minmapsize, quitemmap, "Dy", "position",
-		       "relative position in matching coordinates");
-
-  p->rel_brightness=gal_data_alloc(NULL, GAL_TYPE_UINT16, 1, &num_quads,
-				   NULL, 0, minmapsize, quitemmap,
-				   "rel-brightness", "none",
-				   "relative brightness stored as bit-flags");
-
-  p->a_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
-			  minmapsize, quitemmap, "A-index", "counter",
-			  "index of star A in the quad");
-  p->b_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
-			  minmapsize, quitemmap, "B-index", "counter",
-			  "index of star B in the quad");
-  p->c_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
-			  minmapsize, quitemmap, "C-index", "counter",
-			  "index of star C in the quad");
-  p->d_ind=gal_data_alloc(NULL, GAL_TYPE_UINT32, 1, &num_quads, NULL, 0,
-			  minmapsize, quitemmap, "D-index", "counter",
-			  "index of star D in the quad");
+  p->cx    = gal_data_array_ptr_append_noblank_inplace(p->cx_th,    numthreads);
+  p->cy    = gal_data_array_ptr_append_noblank_inplace(p->cy_th,    numthreads);
+  p->dx    = gal_data_array_ptr_append_noblank_inplace(p->dx_th,    numthreads);
+  p->dy    = gal_data_array_ptr_append_noblank_inplace(p->dy_th,    numthreads);
+  p->bm    = gal_data_array_ptr_append_noblank_inplace(p->bm_th,    numthreads);
+  p->cm    = gal_data_array_ptr_append_noblank_inplace(p->cm_th,    numthreads);
+  p->dm    = gal_data_array_ptr_append_noblank_inplace(p->dm_th,    numthreads);
+  p->a_ind = gal_data_array_ptr_append_noblank_inplace(p->a_ind_th, numthreads);
+  p->b_ind = gal_data_array_ptr_append_noblank_inplace(p->b_ind_th, numthreads);
+  p->c_ind = gal_data_array_ptr_append_noblank_inplace(p->c_ind_th, numthreads);
+  p->d_ind = gal_data_array_ptr_append_noblank_inplace(p->d_ind_th, numthreads);
 }
 
 
@@ -1453,15 +1553,27 @@ static void
 high_level_reference_write(struct params *p, char *in_filename,
 			   char *out_filename)
 {
+  gal_data_t *outtable=NULL;
   gal_fits_list_key_t *keylist=NULL;
 
-  /* Define all columns as a list to be printed in order. */
-  p->dy->next=p->rel_brightness;
-  p->rel_brightness->next=p->a_ind;
-  p->a_ind->next=p->b_ind;
-  p->b_ind->next=p->c_ind;
-  p->c_ind->next=p->d_ind;
-  p->d_ind->next=p->left;     /* 'right' is already 'next' to 'left' */
+  /* If any quads could be found. */
+  if(p->a_ind)
+    {
+      /* Define all columns as a list to be printed in order. */
+      outtable=p->a_ind;
+      p->a_ind->next=p->b_ind;
+      p->b_ind->next=p->c_ind;
+      p->c_ind->next=p->d_ind;
+      p->d_ind->next=p->cx;
+      p->dm->next=p->left;     /* 'right' is already 'next' to 'left' */
+    }
+  /* There weren't any quads: allocate empty datasets to have a table
+     with metadata, but without any rows. */
+  else
+    {
+      printf("\nDO THIS PART: THERE AREN'T ANY DATASETS.\n");
+      exit(1);
+    }
 
   /* Add the necessary keywords to write in the output. */
   gal_fits_key_list_title_add_end(&keylist, "Information on table", 0);
@@ -1473,7 +1585,7 @@ high_level_reference_write(struct params *p, char *in_filename,
 
   /* Write the final table with all the quad information and the
      respective kd-tree. */
-  gal_table_write(p->cx, &keylist, NULL, GAL_TABLE_FORMAT_BFITS,
+  gal_table_write(outtable, &keylist, NULL, GAL_TABLE_FORMAT_BFITS,
                   out_filename, "quad-kdtree", 0);
 }
 
@@ -1505,7 +1617,7 @@ highlevel_reference(char *reference_name, char *kdtree_name,
 
   /* Find the top 'num_in_gpixel' star ids in each grid element. */
   p.brightest_star_id=find_brightest_stars(p.ra, p.dec, p.r_mag,
-					   num_quads, &in_grid,
+					   &num_quads, &in_grid,
                                            num_in_gpixel);
 
   /* Spin-off the threads to calculate quad hashes. */
@@ -1513,19 +1625,32 @@ highlevel_reference(char *reference_name, char *kdtree_name,
 
   /* All the threads have processed the quads. Now, we can allocate
      the final colums and merge all the different results into one. */
-  prepare_reference_out(&p);
+  reference_unite_threads(&p, numthreads);
 
-  /* Construct a tree and fix the column pointers. Note that the
-     kd-tree is ignorant to our higher-level columns. We only want to
-     build the tree with the quad geometric hashes (Cx, Cy, Dx, Dy),
-     so we'll set the 'dy->next' to NULL before calling the kdtree
-     function.  */
-  p.cx->next=p.cy;
-  p.cy->next=p.dx;
-  p.dx->next=p.dy;
-  p.dy->next=NULL;
-  p.left=gal_kdtree_create(p.cx, &p.kdtree_root);
+  /* Construct a tree and fix the column pointers if there is
+     any. Note that the kd-tree is ignorant to our higher-level
+     columns. We only want to build the tree with the quad geometric
+     hashes (Cx, Cy, Dx, Dy), so we'll set the 'dy->next' to NULL
+     before calling the kdtree function.  */
+  if(p.cx)
+    {
+      p.cx->next=p.cy;
+      p.cy->next=p.dx;
+      p.dx->next=p.dy;
+      p.dy->next=p.bm;
 
+      /*********** For a test ********** */
+      p.dy->next=NULL;
+      /**********************************/
+      p.bm->next=p.cm;
+      p.cm->next=p.dm;
+      p.dm->next=NULL;
+      p.left=gal_kdtree_create(p.cx, &p.kdtree_root);
+    }
+
+  /*********** For a test ********** */
+  p.dy->next=p.bm;
+  /**********************************/
   /* Write the k-d tree and all quad data into a table, and include
      the kdtree root index and input filename as keyword arguments. */
   high_level_reference_write(&p, reference_name, kdtree_name);
@@ -1559,22 +1684,8 @@ highlevel_reference(char *reference_name, char *kdtree_name,
 /***********************************************************/
 /********      Match X,Y quads with ref quads       ********/
 /***********************************************************/
-/*
-static size_t
-match_prepare_read_kdtree_root(char *filename)
-{
-  fitsfile *fptr;
-
-  gal_fits_key_read(filename’, char ‘*hdu’, gal_data_t
-		    ‘*keysll’, int ‘readcomment’, int ‘readunit’)
-}
-*/
-
-
-
-
 static void
-match_prepare(struct params *p, char *reference_name, char *kdtree_name,
+query_prepare(struct params *p, char *reference_name, char *kdtree_name,
 	      char *query_name, size_t num_threads)
 {
   char *refhdu="1", *qhdu="1";
@@ -1595,74 +1706,86 @@ match_prepare(struct params *p, char *reference_name, char *kdtree_name,
                                  NULL, 0, 0, -1, 0, NULL);
 
   /* Make sure there are 11 columns. */
-  if(gal_list_data_number(ref_quad_kdtree) != 11)
-    error(EXIT_FAILURE, 0, "%s: %s should be 11 columns but it is %zu columns",
+  if(gal_list_data_number(ref_quad_kdtree) != 13)
+    error(EXIT_FAILURE, 0, "%s: %s should be 13 columns but it is %zu columns",
           __func__, kdtree_name, gal_list_data_number(ref_quad_kdtree));
 
-  /* Cx */
-  p->cx=ref_quad_kdtree;
-  if(p->cx->type != GAL_TYPE_FLOAT64)
-    error(EXIT_FAILURE, 0, "%s: %s 1st column should be float64 but it is %s",
-          __func__, kdtree_name, gal_type_name(p->cx->type, 1));
-
-  /* Cy */
-  p->cy=p->cx->next;
-  if(p->cy->type != GAL_TYPE_FLOAT64)
-    error(EXIT_FAILURE, 0, "%s: %s 2nd column should be float64 but it is %s",
-          __func__, kdtree_name, gal_type_name(p->cy->type, 1));
-
-  /* Dx */
-  p->dx=p->cy->next;
-  if(p->dx->type != GAL_TYPE_FLOAT64)
-    error(EXIT_FAILURE, 0, "%s: %s 3rd column should be float64 but it is %s",
-          __func__, kdtree_name, gal_type_name(p->dx->type, 1));
-
-  /* Dy */
-  p->dy=p->dx->next;
-  if(p->dy->type != GAL_TYPE_FLOAT64)
-    error(EXIT_FAILURE, 0, "%s: %s 4th column should be float64 but it is %s",
-          __func__, kdtree_name, gal_type_name(p->dy->type, 1));
-
-  /* Relative brightness. */
-  p->rel_brightness=p->dy->next;
-  if(p->rel_brightness->type != GAL_TYPE_UINT16)
-    error(EXIT_FAILURE, 0, "%s: %s 5th column should be uint16 but it is %s",
-          __func__, kdtree_name, gal_type_name(p->rel_brightness->type, 1));
-
   /* Index of quad's A vertice */
-  p->a_ind=p->rel_brightness->next;
+  p->a_ind=ref_quad_kdtree;
   if(p->a_ind->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 6th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 1st column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->a_ind->type, 1));
 
   /* Index of quad's B vertice */
   p->b_ind=p->a_ind->next;
   if(p->b_ind->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 7th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 2nd column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->b_ind->type, 1));
 
   /* Index of quad's C vertice */
   p->c_ind=p->b_ind->next;
   if(p->c_ind->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 8th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 3rd column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->c_ind->type, 1));
 
   /* Index of quad's D vertice */
   p->d_ind=p->c_ind->next;
   if(p->d_ind->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 9th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 4th column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->d_ind->type, 1));
 
+  /* Cx */
+  p->cx=p->d_ind->next;
+  if(p->cx->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 5th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->cx->type, 1));
+
+  /* Cy */
+  p->cy=p->cx->next;
+  if(p->cy->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 6th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->cy->type, 1));
+
+  /* Dx */
+  p->dx=p->cy->next;
+  if(p->dx->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 7th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->dx->type, 1));
+
+  /* Dy */
+  p->dy=p->dx->next;
+  if(p->dy->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 8th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->dy->type, 1));
+
+  /* B-mag-frac */
+  p->bm=p->dy->next;
+  if(p->bm->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 9th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->dy->type, 1));
+
+  /* C-mag-frac */
+  p->cm=p->bm->next;
+  if(p->cm->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 10th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->dy->type, 1));
+
+  /* D-mag-frac */
+  p->dm=p->cm->next;
+  if(p->dm->type != GAL_TYPE_FLOAT64)
+    error(EXIT_FAILURE, 0, "%s: %s 11th column should be float64 but it is %s",
+          __func__, kdtree_name, gal_type_name(p->dy->type, 1));
+
   /* kd-tree left subtrees. */
-  p->left=p->d_ind->next;
+  p->left=p->dm->next;
   if(p->left->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 10th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 12th column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->left->type, 1));
 
   /* kd-tree right subtrees. */
   p->right=p->left->next;
   if(p->right->type != GAL_TYPE_UINT32)
-    error(EXIT_FAILURE, 0, "%s: %s 11th column should be uint32 but it is %s",
+    error(EXIT_FAILURE, 0, "%s: %s 13th column should be uint32 but it is %s",
           __func__, kdtree_name, gal_type_name(p->right->type, 1));
 
   /* We don't need all of the columns to remain as lists any more so
@@ -1708,14 +1831,14 @@ highlevel_query(char *reference_name, char *kdtree_name, char *query_name,
   /* Read and do sanity checks. */
   p.ds9regprefix=ds9regprefix;
   p.magnitude_error=magnitude_error;
-  match_prepare(&p, reference_name, kdtree_name, query_name, numthreads);
+  query_prepare(&p, reference_name, kdtree_name, query_name, numthreads);
 
   /* make a box-grid */
   grid_make(p.x, p.y, x_numbin, y_numbin, &in_grid);
 
   /* Find the top 5 star ids using structure. */
   p.brightest_star_id=find_brightest_stars(p.x, p.y, p.q_mag,
-                                           num_quads, &in_grid,
+                                           &num_quads, &in_grid,
                                            num_in_gpixel);
 
   /* Add last configuration and spin-off the threads. */
@@ -1753,11 +1876,11 @@ main()
   int buildref=1;
 
   size_t numthreads=1;
-  float max_mag_diff=2, magnitude_error=0.05;
-  size_t x_numbin=2, y_numbin=2, num_in_gpixel=1;
+  float max_mag_diff=1, magnitude_error=0.05;
+  size_t x_numbin=5, y_numbin=5, num_in_gpixel=1;
 
   /* Reference catalog names. */
-  char *ds9regprefix="./build/quads";
+  char *ds9regprefix="/home/mohammad/tmp/reg/quads";
   char *kdtree_name="./build/kdtree.fits";
   char *reference_name="./input/reference.txt";
 
@@ -1770,9 +1893,6 @@ main()
     highlevel_reference(reference_name, kdtree_name, ds9regprefix,
 			max_mag_diff, magnitude_error, numthreads,
 			x_numbin, y_numbin, num_in_gpixel);
-
-  printf("\n... GOING TO QUERY ...\n\n");
-  printf("EXITING...\n"); exit(0);
 
   /* Find quads on the query image and match them. */
   highlevel_query(reference_name, kdtree_name, query_name, ds9regprefix,
