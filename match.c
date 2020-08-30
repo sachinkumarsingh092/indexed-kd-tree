@@ -296,12 +296,13 @@ match_quads_as_ds9_reg_matched(size_t refqid, double *ra, double *dec,
 			       uint32_t *rfa, uint32_t *rfb, uint32_t *rfc,
 			       uint32_t *rfd, size_t qryqid, double *x,
 			       double *y, uint32_t *qa, uint32_t *qb,
-			       uint32_t *qc, uint32_t *qd, char *ds9regprefix)
+			       uint32_t *qc, uint32_t *qd,
+			       double least_dist, char *ds9regprefix)
 {
   FILE *regfile;
   size_t ordinds[8];
-  char regname[1000];
   static int counter=0;
+  char regname[1000], qname[1000];
   double ref[8]={ ra[rfa[refqid]], dec[rfa[refqid]],
                   ra[rfb[refqid]], dec[rfb[refqid]],
                   ra[rfc[refqid]], dec[rfc[refqid]],
@@ -321,6 +322,9 @@ match_quads_as_ds9_reg_matched(size_t refqid, double *ra, double *dec,
 	  ref[ordinds[2]*2], ref[ordinds[2]*2+1],
 	  ref[ordinds[3]*2], ref[ordinds[3]*2+1], refqid, "r");
 
+  /* Set the query name (including the least distance). */
+  sprintf(qname, "query-%g", least_dist);
+
   /* Add the query quad. */
   fprintf(regfile, "image\n");
   gal_polygon_vertices_sort(query, 4, ordinds);
@@ -328,7 +332,7 @@ match_quads_as_ds9_reg_matched(size_t refqid, double *ra, double *dec,
 	  query[ordinds[0]*2], query[ordinds[0]*2+1],
 	  query[ordinds[1]*2], query[ordinds[1]*2+1],
 	  query[ordinds[2]*2], query[ordinds[2]*2+1],
-	  query[ordinds[3]*2], query[ordinds[3]*2+1], "query");
+	  query[ordinds[3]*2], query[ordinds[3]*2+1], qname);
 
   /* Close the file. */
   if(fclose(regfile)==EOF)
@@ -454,6 +458,11 @@ find_brightest_stars(gal_data_t *x_data, gal_data_t *y_data,
   double *x=x_data->array, *y=y_data->array;
   size_t *brightest_star_id, *bsi_counter=NULL;
   size_t *sorted_id=NULL, npoints=mag_data->size;
+
+  /************************************
+   To temporarily disable sorting and using all stars. */
+  npoints=*num_quads;
+  /************************************/
 
   /* If the number of points is less than the (theoretical) number of
      quads, then just use all the stars (so we don't need to sort). */
@@ -667,19 +676,19 @@ quads_vertices_find(struct params_on_thread *p_th, size_t refind,
   candidate_list=NULL;
   if(p->c1==p->ra)
     {
-      gal_list_sizet_add(&candidate_list, 52);
-      gal_list_sizet_add(&candidate_list, 58);
-      gal_list_sizet_add(&candidate_list, 29);
-      gal_list_sizet_add(&candidate_list, 23);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
     }
   else
     {
-      gal_list_sizet_add(&candidate_list, 68);
-      gal_list_sizet_add(&candidate_list, 70);
-      gal_list_sizet_add(&candidate_list, 36);
-      gal_list_sizet_add(&candidate_list, 22);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
+      gal_list_sizet_add(&candidate_list, XXX);
     }
-   *********************************************/
+    *********************************************/
 
   /* Count the number of good stars and if they are less than 4, just
      return (this bright star is not useful for quads given the
@@ -850,7 +859,7 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
      ignore this quad. */
   angle_c0d=find_angle_aob(c, a, d);
   angle_c1d=find_angle_aob(c, b, d);
-  if( fabs(angle_c0d - angle_c1d)<MATCH_FLT_ERROR ) /* The angles are almost equal. */
+  if( fabs(angle_c0d - angle_c1d)<MATCH_FLT_ERROR )
     {
       /* For a check.
       printf("\nThe angle between C0D and C1D are equal!"
@@ -886,11 +895,12 @@ hash_geometric(double *c1_arr, double *c2_arr, size_t *vertices,
      define C to be the one that has the smaller angle. */
   angle_a0b=find_angle_aob(a, c, b);
   angle_a1b=find_angle_aob(a, d, b);
-  if( fabs(angle_a0b - angle_a1b)<MATCH_FLT_ERROR ) /* The angles are almost equal. */
+  if( fabs(angle_a0b - angle_a1b)<MATCH_FLT_ERROR )
     {
-      /* To help in debugging. */
+      /* To help in debugging.
       printf("\nThe angle between A0B and A1B are equal!\n"
 	     " .... DISCARDING QUAD ...\n");
+      */
       hash[0]=hash[1]=hash[2]=hash[3]=NAN;
       vertices[0]=vertices[1]=vertices[2]=vertices[3]=GAL_BLANK_SIZE_T;
       return;
@@ -1020,14 +1030,13 @@ match_quad_to_ref(struct params_on_thread *p_th, double *hash,
   }
   */
 
-  /* If the relative brightness matches. */
+  /* If we have a match. */
   if(least_dist<0.01)
     {
-      /* To help in visualization. */
-      printf("leastdist: %f\n", least_dist);
+      /* Make a DS9 region file if necessary. */
       match_quads_as_ds9_reg_matched(refqid, ra, dec, rfa, rfb, rfc, rfd,
 				     qryqid, x, y, qa, qb, qc, qd,
-				     p->ds9regprefix);
+				     least_dist, p->ds9regprefix);
     }
 }
 
@@ -1767,13 +1776,13 @@ main()
   int buildref=1;
 
   size_t numthreads=1;
-  float max_mag_diff=5;
-  size_t x_numbin=5, y_numbin=5, num_in_gpixel=5;
+  float max_mag_diff=3;
+  size_t x_numbin=5, y_numbin=5, num_in_gpixel=50;
 
   /* Reference catalog names. */
   char *ds9regprefix="/home/mohammad/tmp/reg/quads";
   char *kdtree_name="./build/kdtree.fits";
-  char *reference_name="./input/reference.txt";
+  char *reference_name="./input/ref-bright.fits";
 
   /* Query catalog name. */
   char *query_name="./input/query2.txt";
