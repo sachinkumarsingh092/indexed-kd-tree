@@ -14,7 +14,7 @@ REGION :=
 
 
 compile: ${PROGNAME}.c
-	rm -f ./build/*
+	rm -f ./build/*.txt ./build/reg/* ./build/*.fits
 	${CC} ${CFLAGS} $< ${INCLUDES} -o ${PROGNAME} ${LIBS} && ./${PROGNAME}
 
 ds9:
