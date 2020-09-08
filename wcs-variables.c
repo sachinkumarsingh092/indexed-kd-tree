@@ -15,7 +15,10 @@ int main()
   double x=x1, y=y1;
   double ra=ra1, dec=dec1;
 
-
+  /* To bring to the current origin, subtract (x0,y0) from it. 
+     Then calculate variables X and Y, which are finally used
+     to find theta(roatation) and s(scale)
+  */
   double X=((x-x0)*ra+(y-y0)*dec)/(ra*ra+dec*dec);
   double Y=(ra*X-(x-x0))/dec;
   double theta=atan(Y/X);
