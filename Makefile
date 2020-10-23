@@ -6,7 +6,7 @@ CFLAGS := -Wall -O0 -g -Wno-unused-function #-Wno-unused-variable -Wno-unused-bu
 INCLUDES := -I/usr/local/include
 LIBS := /usr/local/lib/libgnuastro.a\
 	-lgit2 -ltiff -llzma -ljpeg -L/usr/local/lib -lwcs -lcfitsio -lz \
-	/usr/local/lib/libgsl.so /usr/local/lib/libgslcblas.so -lm -lc -lpthread -pthread
+	/usr/lib/libgsl.so /usr/lib/libgslcblas.so -lm -lc -lpthread -pthread
 
 PROGNAME := match
 SHELL := /usr/bin/env bash

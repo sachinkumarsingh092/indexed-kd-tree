@@ -1842,6 +1842,10 @@ highlevel_wcs(struct params *p)
   uint32_t *c_ind_qry_a=p->c_ind_qry->array;
   uint32_t *d_ind_qry_a=p->d_ind_qry->array;
 
+  uint32_t r_qid;
+  uint32_t *a_ind_a=p->a_ind->array;
+  double *ra_a=p->ra->array, *dec_a=p->dec->array;
+
   for(i=0;i<p->a_ind_qry->size;++i)
     {
       printf("%u(%g,%g), %u(%g, %g), %u(%g,%g), %u(%g,%g) matches with quad %lu in ref\n",
@@ -1850,7 +1854,14 @@ highlevel_wcs(struct params *p)
 	     c_ind_qry_a[i], x_a[ c_ind_qry_a[i] ],  y_a[ c_ind_qry_a[i] ],
 	     d_ind_qry_a[i], x_a[ d_ind_qry_a[i] ],  y_a[ d_ind_qry_a[i] ],
 	     ref_qry_a[i]);
+      
+      r_qid=ref_qry_a[i];
+      printf("starA: (%g, %g) --> (%g, %g)\n", x_a[ a_ind_qry_a[i] ],  y_a[ a_ind_qry_a[i] ]
+                                             , ra_a[a_ind_a[r_qid]], dec_a[a_ind_a[r_qid]]);
+
+      exit(0);
     }
+  
 }
 
 
@@ -1859,6 +1870,61 @@ highlevel_wcs(struct params *p)
 
 
 
+
+
+
+static void
+calculate_rot_scale(struct params *p)
+{
+  size_t i, j;
+  uint64_t *ref_qry_a=p->ref_qry->array;
+  double *x_a=p->x->array, *y_a=p->y->array;
+  uint32_t *a_ind_qry_a=p->a_ind_qry->array;
+  uint32_t *b_ind_qry_a=p->b_ind_qry->array;
+  uint32_t *c_ind_qry_a=p->c_ind_qry->array;
+  uint32_t *d_ind_qry_a=p->d_ind_qry->array;
+
+  uint32_t r_qid;
+  uint32_t *a_ind_a=p->a_ind->array;
+  uint32_t *b_ind_a=p->b_ind->array;
+  uint32_t *c_ind_a=p->c_ind->array;
+  uint32_t *d_ind_a=p->d_ind->array;
+  double *ra_a=p->ra->array, *dec_a=p->dec->array;
+
+
+  for(i=0;i<p->a_ind_qry->size;++i)
+    {
+      r_qid=ref_qry_a[i];
+      double x[4]={ x_a[ a_ind_qry_a[i] ] - x_a[ a_ind_qry_a[i] ],
+	            x_a[ b_ind_qry_a[i] ] - x_a[ a_ind_qry_a[i] ],
+                    x_a[ c_ind_qry_a[i] ] - x_a[ a_ind_qry_a[i] ],
+		    x_a[ d_ind_qry_a[i] ] - x_a[ a_ind_qry_a[i] ] };
+      double y[4]={ y_a[ a_ind_qry_a[i] ] - y_a[ a_ind_qry_a[i] ],
+	            y_a[ b_ind_qry_a[i] ] - y_a[ a_ind_qry_a[i] ],
+                    y_a[ c_ind_qry_a[i] ] - y_a[ a_ind_qry_a[i] ],
+		    y_a[ d_ind_qry_a[i] ] - y_a[ a_ind_qry_a[i] ] };
+
+      double r[4]={ ra_a[a_ind_a[r_qid]] - ra_a[a_ind_a[r_qid]],
+	            ra_a[b_ind_a[r_qid]] - ra_a[a_ind_a[r_qid]],
+                    ra_a[c_ind_a[r_qid]] - ra_a[a_ind_a[r_qid]],
+		    ra_a[d_ind_a[r_qid]] - ra_a[a_ind_a[r_qid]] };
+      double d[4]={ dec_a[a_ind_a[r_qid]] - dec_a[a_ind_a[r_qid]],
+	            dec_a[b_ind_a[r_qid]] - dec_a[a_ind_a[r_qid]],
+                    dec_a[c_ind_a[r_qid]] - dec_a[a_ind_a[r_qid]],
+		    dec_a[d_ind_a[r_qid]] - dec_a[a_ind_a[r_qid]] };
+      for(j=1;j<4;++j)
+        {
+          double X=((x[j])*r[j]+(y[j])*d[j])/(r[j]*r[j]+d[j]*d[j]);
+          double Y=(r[j]*X-x[j])/d[j];
+          float theta=atan(Y/X);
+          float s=X/cos(theta);
+
+          printf("\ttheta=%g, scale=%g\n", theta, s);
+        }
+      printf("\t===============================\n");
+    }
+  exit(0);
+}
 
 
 
@@ -1883,8 +1949,8 @@ main()
   size_t x_numbin=1, y_numbin=1, num_in_gpixel=50;
 
   /* File names. */
-  char *query_name="./input2/xy.txt";
-  char *reference_name="./input2/wcs.txt";
+  char *query_name="./input2/xy_small.txt";
+  char *reference_name="./input2/wcs_small.txt";
   char *ds9regprefix="./build/reg/quads";
   char *kdtree_name="./build/kdtree.fits";
   char *output_name = "./build/matched-out.fits";
@@ -1906,7 +1972,9 @@ main()
 		  num_in_gpixel);
 
   /* Using matched quads, find WCS. */
-  highlevel_wcs(&p);
+  // highlevel_wcs(&p);
+    calculate_rot_scale(&p);
+
 
   /* Finish the program successfully. */
   return EXIT_SUCCESS;
