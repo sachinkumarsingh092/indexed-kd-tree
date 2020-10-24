@@ -1854,14 +1854,13 @@ highlevel_wcs(struct params *p)
 	     c_ind_qry_a[i], x_a[ c_ind_qry_a[i] ],  y_a[ c_ind_qry_a[i] ],
 	     d_ind_qry_a[i], x_a[ d_ind_qry_a[i] ],  y_a[ d_ind_qry_a[i] ],
 	     ref_qry_a[i]);
-      
+
       r_qid=ref_qry_a[i];
       printf("starA: (%g, %g) --> (%g, %g)\n", x_a[ a_ind_qry_a[i] ],  y_a[ a_ind_qry_a[i] ]
                                              , ra_a[a_ind_a[r_qid]], dec_a[a_ind_a[r_qid]]);
 
       exit(0);
     }
-  
 }
 
 
@@ -1872,7 +1871,51 @@ highlevel_wcs(struct params *p)
 
 
 
-
+/* We'll use homogenous matrix to find 'theta'(t) and 'scale'(s) value
+ * with the coordinates given from the query image, the [X] matrix, and
+ * the reference matrix with `ra` and `dec` values, matrix [R].
+ * We assume counter-clock wise rotation when matching the images.
+ *
+ * We merge the rotation and scaling warpings by multiplying them.
+ *
+ *       [X]   =      [ROTATION]       *    [SCALING]   *   [R]
+ *      -----    --------------------      -----------    -------
+ *      | x |    | cos(t) -sin(t) 0 |      | s  0  0 |    | ra  |
+ *      | y |  = | sin(t)  cos(t) 0 |      | 0  s  0 |    | dec |
+ *      | 1 |    |   0       0    1 |      | 0  0  1 |    |  1  |
+ *
+ * Opening up the matrix multiplication, we finally get:
+ *
+ *	x = s*cos(t)*ra - s*sin(t)*dec				(1)
+ *	y = s*sin(t)*ra + s*cos(t)*dec				(2)
+ *
+ * Multiplying eq. (1) with `ra` and eq. (2) with `dec`, we get:
+ *
+ * 	ra*x  = s*cos(t)*ra^2  - s*sin(t)*ra*dec			(3)
+ * 	dec*y = s*cos(t)*dec^2 + s*sin(t)*ra*dec			(4)
+ *
+ * Adding (3) and (4), we finally get:
+ *
+ * 	s*cos(t) = (ra*x + dec*y)/(ra^2 + dec^2)			(5)
+ *
+ * Taking X = s*cos(t) and Y = s*sin(t), and putting X in (5):
+ *
+ * 	X = (ra*x + dec*y)/(ra^2 + dec^2)				(6)
+ *
+ * From eq. (1), we get Y:
+ *
+ * 	Y = (ra*X - x)/dec						(7)
+ *
+ * Dividing Y by X, we get theta(t):
+ *
+ * 	t = atan(Y/X)							(8)
+ *
+ * Using the value of theta(t), we get scale(s):
+ *
+ * 	s = X/cos(t)							(9)
+ *
+ * The sign of theta will reverse for any clockwise rotations.
+ */
 static void
 calculate_rot_scale(struct params *p)
 {
@@ -1917,9 +1960,9 @@ calculate_rot_scale(struct params *p)
           double X=((x[j])*r[j]+(y[j])*d[j])/(r[j]*r[j]+d[j]*d[j]);
           double Y=(r[j]*X-x[j])/d[j];
           float theta=atan(Y/X);
-          float s=X/cos(theta);
+          float scale=X/cos(theta);
 
-          printf("\ttheta=%g, scale=%g\n", theta, s);
+          printf("\ttheta=%g, scale=%g\n", theta, scale);
         }
       printf("\t===============================\n");
     }
